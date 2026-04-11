@@ -7,16 +7,18 @@ Ollama（ローカルLLM）を使って以下を実行する：
 
 設計方針：
   - テンプレート優先でリアクション速度を確保（< 0.5 秒目標）
-  - LLM 呼び出しはサブプロセスで行い、タイムアウトで保護
+  - subprocess ではなく Ollama HTTP API を直接呼ぶことでレイテンシを最小化
+    subprocess: プロセス起動コスト 200〜500ms が毎回発生
+    HTTP API  : 既存サーバーへの接続なのでほぼゼロオーバーヘッド
   - 将来的に API 型 LLM へ差し替えやすいよう _call_ollama を分離
 """
 
-import subprocess
-import json
 import logging
 import time
 import random
 import re
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +26,10 @@ logger = logging.getLogger(__name__)
 # 定数
 # ---------------------------------------------------------------------------
 
-OLLAMA_MODEL = "gemma2:2b"  # 軽量モデル推奨（gemma2:2b / llama3.2:1b など）
-OLLAMA_TIMEOUT = 10          # Ollama 呼び出しのタイムアウト秒数
+OLLAMA_MODEL = "gemma2:2b"        # 軽量モデル推奨（gemma2:2b / llama3.2:1b など）
+OLLAMA_API_URL = "http://localhost:11434/api/generate"
+OLLAMA_TIMEOUT = 10               # HTTP リクエストのタイムアウト秒数
+OLLAMA_NUM_PREDICT = 60           # 生成トークン上限（少ないほど速い）
 
 # リアクション用テンプレート（高速応答のため LLM を使わずに返す）
 REACTION_TEMPLATES: dict[str, list[str]] = {
@@ -160,7 +164,10 @@ class AICompanion:
 
     def _call_ollama(self, prompt: str, max_chars: int = 40) -> str:
         """
-        Ollama をサブプロセスで呼び出し、応答テキストを返す。
+        Ollama HTTP API を直接呼び出し、応答テキストを返す。
+
+        subprocess 方式と比べてプロセス起動コストがないため大幅に高速。
+        サーバーは常駐しているので接続コストのみ。
 
         Args:
             prompt: LLM に渡すプロンプト
@@ -170,29 +177,36 @@ class AICompanion:
         """
         start = time.time()
         try:
-            result = subprocess.run(
-                ["ollama", "run", self.model],
-                input=prompt,
-                capture_output=True,
-                text=True,
+            res = requests.post(
+                OLLAMA_API_URL,
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "num_predict": OLLAMA_NUM_PREDICT,
+                        "temperature": 0.8,
+                        "top_p": 0.9,
+                    },
+                },
                 timeout=OLLAMA_TIMEOUT,
-                encoding="utf-8",
             )
             elapsed = time.time() - start
-            logger.debug("Ollama responded in %.2fs", elapsed)
+            logger.debug("Ollama HTTP responded in %.2fs", elapsed)
 
-            if result.returncode != 0:
-                logger.error("Ollama returncode %d: %s", result.returncode, result.stderr.strip())
+            if res.status_code != 200:
+                logger.error("Ollama HTTP %d: %s", res.status_code, res.text[:100])
                 return self._fallback()
 
-            return self._clean_response(result.stdout, max_chars)
+            raw = res.json().get("response", "")
+            return self._clean_response(raw, max_chars)
 
-        except subprocess.TimeoutExpired:
-            logger.warning("Ollama timed out after %ds", OLLAMA_TIMEOUT)
-            return "ちょっと待って"
-        except FileNotFoundError:
-            logger.error("Ollama binary not found. Install from https://ollama.com")
+        except requests.exceptions.ConnectionError:
+            logger.error("Ollama not running at %s", OLLAMA_API_URL)
             return "（AI未接続）"
+        except requests.exceptions.Timeout:
+            logger.warning("Ollama HTTP timed out after %ds", OLLAMA_TIMEOUT)
+            return "ちょっと待って"
         except Exception as e:
             logger.error("Ollama unexpected error: %s", e)
             return self._fallback()

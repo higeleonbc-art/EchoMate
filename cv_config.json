@@ -1,0 +1,45 @@
+{
+  "_comment": "OpenCV 検出ゾーン設定ファイル。ゲームに合わせて region を変更してください。",
+  "zones": [
+    {
+      "_comment": "HP バーが赤くなったら low_hp を発火（左下の HP バーを想定）",
+      "name": "hp_bar_low",
+      "region": { "top": 880, "left": 60, "width": 220, "height": 18 },
+      "event_type": "low_hp",
+      "method": "color_threshold",
+      "params": { "color": "red", "threshold": 0.4 },
+      "cooldown": 5.0,
+      "enabled": true
+    },
+    {
+      "_comment": "キルフィード（右上）に黄色テキストが出たら kill を発火",
+      "name": "kill_feed",
+      "region": { "top": 10, "left": 1700, "width": 200, "height": 80 },
+      "event_type": "kill",
+      "method": "color_threshold",
+      "params": { "color": "yellow", "threshold": 0.12 },
+      "cooldown": 3.0,
+      "enabled": true
+    },
+    {
+      "_comment": "デス画面（中央が赤くなる演出）で death を発火",
+      "name": "death_screen",
+      "region": { "top": 400, "left": 700, "width": 500, "height": 300 },
+      "event_type": "death",
+      "method": "color_threshold",
+      "params": { "color": "red", "threshold": 0.25 },
+      "cooldown": 8.0,
+      "enabled": true
+    },
+    {
+      "_comment": "テンプレートマッチングのサンプル（画像を用意してから enabled: true にする）",
+      "name": "big_play_icon",
+      "region": { "top": 300, "left": 800, "width": 300, "height": 100 },
+      "event_type": "big_play",
+      "method": "template",
+      "params": { "template_path": "templates/big_play.png", "threshold": 0.80 },
+      "cooldown": 5.0,
+      "enabled": false
+    }
+  ]
+}
