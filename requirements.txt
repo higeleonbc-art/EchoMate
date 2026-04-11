@@ -1,0 +1,14 @@
+# EchoMate - 依存パッケージ
+# インストール: pip install -r requirements.txt
+
+# 音声認識（マイク入力）
+SpeechRecognition>=3.10.0
+
+# HTTP クライアント（VOICEVOX API）
+requests>=2.31.0
+
+# 音声再生（pyaudio はバイナリ依存あり）
+# Linux:   sudo apt install portaudio19-dev && pip install pyaudio
+# macOS:   brew install portaudio && pip install pyaudio
+# Windows: pip install pyaudio
+pyaudio>=0.2.14
