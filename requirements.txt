@@ -1,23 +1,26 @@
 # EchoMate - 依存パッケージ
 # インストール: pip install -r requirements.txt
 
-# 音声認識（マイク入力）
-SpeechRecognition>=3.10.0
+# ローカル音声認識（faster-whisper / オフライン動作）
+faster-whisper>=1.0.0
 
 # HTTP クライアント（VOICEVOX API + Ollama HTTP API）
 requests>=2.31.0
 
-# 音声再生（pyaudio はバイナリ依存あり）
+# 数値計算（VAD・RMS 計算）
+numpy>=1.24.0
+
+# 音声入出力（pyaudio はバイナリ依存あり）
 # Windows: pip install pyaudio
 # Linux:   sudo apt install portaudio19-dev && pip install pyaudio
 # macOS:   brew install portaudio && pip install pyaudio
 pyaudio>=0.2.14
 
 # ── OpenCV 画面検出（任意）────────────────────────────────────
-# pip install opencv-python mss
+# pip install opencv-python mss numpy
 opencv-python>=4.8.0
 mss>=9.0.1
 
-# ── セットアップウィザード（Windows）────────────────────────
+# ── セットアップウィザード（Windows のみ）───────────────────
 # pip install pywin32
 pywin32>=306

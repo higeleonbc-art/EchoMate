@@ -23,6 +23,7 @@ import threading
 import time
 import logging
 import json
+from collections import deque
 from dataclasses import dataclass, field
 
 try:
@@ -100,6 +101,8 @@ class OpenCVDetector:
         self._prev_frames: dict[str, np.ndarray] = {}
         # brightness 用：ゾーンごとの明度 EMA を保持
         self._brightness_ema: dict[str, float] = {}
+        # 時系列フィルタ用：ゾーンごとの検出履歴（deque）
+        self._detection_history: dict[str, deque] = {}
         self._load_config()
 
     # ------------------------------------------------------------------
@@ -200,24 +203,44 @@ class OpenCVDetector:
                 time.sleep(sleep_time)
 
     def _check_zone(self, sct: "mss.mss", zone: DetectionZone) -> None:
-        """1 つのゾーンを検査してイベントを発火する"""
+        """
+        1 つのゾーンを検査してイベントを発火する。
+
+        時系列フィルタ:
+          params に min_hits / window を指定することで
+          「直近 window フレームのうち min_hits 回以上検出」で発火する。
+          指定がない場合は単発検出で即発火（後方互換）。
+        """
         try:
             raw = sct.grab(zone.region)
             frame = cv2.cvtColor(np.array(raw), cv2.COLOR_BGRA2BGR)
 
-            detected = False
+            raw_detected = False
             if zone.method == "color_threshold":
-                detected = self._detect_by_color(frame, zone.params)
+                raw_detected = self._detect_by_color(frame, zone.params)
             elif zone.method == "template":
-                detected = self._detect_by_template(frame, zone.params)
+                raw_detected = self._detect_by_template(frame, zone.params)
             elif zone.method == "frame_diff":
-                detected = self._detect_by_frame_diff(frame, zone.name, zone.params)
+                raw_detected = self._detect_by_frame_diff(frame, zone.name, zone.params)
             elif zone.method == "brightness":
-                detected = self._detect_by_brightness(frame, zone.name, zone.params)
+                raw_detected = self._detect_by_brightness(frame, zone.name, zone.params)
             else:
                 logger.warning("Unknown detection method: %s", zone.method)
 
-            if detected:
+            # ── 時系列フィルタ ────────────────────────────────
+            min_hits = int(zone.params.get("min_hits", 1))
+            window   = int(zone.params.get("window",   1))
+
+            if min_hits > 1 or window > 1:
+                hist = self._detection_history.setdefault(
+                    zone.name, deque(maxlen=max(window, 1))
+                )
+                hist.append(raw_detected)
+                confirmed = sum(list(hist)[-window:]) >= min_hits
+            else:
+                confirmed = raw_detected
+
+            if confirmed:
                 self._fire_event(zone)
 
         except Exception as e:

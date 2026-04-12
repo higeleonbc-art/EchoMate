@@ -2,12 +2,12 @@
 voice.py - 音声処理モジュール
 
 VoiceOutput : VOICEVOX HTTP API を使ったテキスト読み上げ
-VoiceInput  : SpeechRecognition を使ったマイク音声認識（Google STT）
+VoiceInput  : faster-whisper によるオフライン日本語音声認識
 
-設計方針：
-  - VOICEVOX が起動していない場合はテキスト出力のみに自動フォールバック
-  - pyaudio が未インストールの場合も同様にフォールバック
-  - VoiceOutput はスレッドロックで同時発話を防止
+変更点（v2）:
+  - Google STT → faster-whisper（ローカル処理・オフライン動作）
+  - VoiceOutput.set_speaker(): キャラクター切替時に speaker_id を動的変更
+  - エネルギーベース VAD: 無音検出で発話区間を自動分割
 """
 
 import io
@@ -16,8 +16,8 @@ import logging
 import threading
 import time
 
+import numpy as np
 import requests
-import speech_recognition as sr
 
 try:
     import pyaudio
@@ -25,17 +25,31 @@ try:
 except ImportError:
     _PYAUDIO_AVAILABLE = False
 
+try:
+    from faster_whisper import WhisperModel
+    _WHISPER_AVAILABLE = True
+except ImportError:
+    _WHISPER_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # 定数
 # ---------------------------------------------------------------------------
 
-VOICEVOX_BASE_URL = "http://localhost:50021"
-DEFAULT_SPEAKER_ID = 3   # 3 = ずんだもん（ノーマル）
-REQUEST_TIMEOUT_QUERY = 5    # audio_query タイムアウト（秒）
-REQUEST_TIMEOUT_SYNTH = 10   # synthesis タイムアウト（秒）
-AUDIO_CHUNK_SIZE = 1024
+VOICEVOX_BASE_URL    = "http://localhost:50021"
+DEFAULT_SPEAKER_ID   = 7       # 7 = ずんだもん（キッドのデフォルト）
+REQUEST_TIMEOUT_QUERY = 5
+REQUEST_TIMEOUT_SYNTH = 10
+AUDIO_CHUNK_SIZE     = 1024
+
+# faster-whisper 設定
+WHISPER_MODEL_SIZE   = "small"   # base / small / medium（small 推奨）
+WHISPER_RATE         = 16000     # Whisper 最適サンプリングレート
+WHISPER_CHUNK        = 512
+SILENCE_RMS          = 0.012     # この RMS 以下を「無音」と判定
+SILENCE_FRAMES       = 30        # 無音フレームが続いたら発話終了（約 0.96 秒）
+MAX_RECORD_FRAMES    = 8 * (WHISPER_RATE // WHISPER_CHUNK)  # 最大録音 8 秒
 
 
 # ---------------------------------------------------------------------------
@@ -44,90 +58,73 @@ AUDIO_CHUNK_SIZE = 1024
 
 class VoiceOutput:
     """
-    VOICEVOX を使ってテキストを音声に変換し、再生する。
-    VOICEVOX が利用できない場合はテキスト出力のみ行う。
+    VOICEVOX を使ってテキストを音声に変換し再生する。
+    VOICEVOX が起動していない場合はコンソール出力にフォールバック。
     """
 
     def __init__(self, speaker_id: int = DEFAULT_SPEAKER_ID) -> None:
         self.speaker_id = speaker_id
         self._lock = threading.Lock()
-        self._voicevox_available: bool | None = None  # None = 未確認
+        self._voicevox_available: bool | None = None
         logger.info("VoiceOutput initialized (speaker_id=%d)", speaker_id)
 
+    def set_speaker(self, speaker_id: int) -> None:
+        """キャラクター切替時に VOICEVOX の話者を変更する"""
+        self.speaker_id = speaker_id
+        logger.info("VOICEVOX speaker changed to %d", speaker_id)
+
     def speak(self, text: str) -> None:
-        """
-        テキストを音声に変換して再生する。
-        失敗した場合はコンソール出力のみ。
-        """
         if not text:
             return
         with self._lock:
-            logger.debug("Speaking: %s", text)
-            audio_data = self._synthesize(text)
-            if audio_data:
-                self._play_wav(audio_data)
+            audio = self._synthesize(text)
+            if audio:
+                self._play_wav(audio)
             else:
-                # フォールバック：コンソール出力
                 print(f"[Voice] {text}")
 
-    # ------------------------------------------------------------------
-    # プライベートメソッド
-    # ------------------------------------------------------------------
-
     def _synthesize(self, text: str) -> bytes | None:
-        """VOICEVOX API でテキストを WAV バイト列に変換する"""
         try:
-            # Step 1: audio_query
-            query_res = requests.post(
+            q = requests.post(
                 f"{VOICEVOX_BASE_URL}/audio_query",
                 params={"text": text, "speaker": self.speaker_id},
                 timeout=REQUEST_TIMEOUT_QUERY,
             )
-            if query_res.status_code != 200:
-                logger.error("audio_query failed: HTTP %d", query_res.status_code)
+            if q.status_code != 200:
+                logger.error("audio_query failed: HTTP %d", q.status_code)
                 return None
-            audio_query = query_res.json()
 
-            # Step 2: synthesis
-            synth_res = requests.post(
+            s = requests.post(
                 f"{VOICEVOX_BASE_URL}/synthesis",
                 params={"speaker": self.speaker_id},
-                json=audio_query,
+                json=q.json(),
                 timeout=REQUEST_TIMEOUT_SYNTH,
             )
-            if synth_res.status_code != 200:
-                logger.error("synthesis failed: HTTP %d", synth_res.status_code)
+            if s.status_code != 200:
+                logger.error("synthesis failed: HTTP %d", s.status_code)
                 return None
 
             self._voicevox_available = True
-            return synth_res.content
+            return s.content
 
         except requests.exceptions.ConnectionError:
             if self._voicevox_available is not False:
-                logger.warning(
-                    "VOICEVOX not running at %s — falling back to text output.",
-                    VOICEVOX_BASE_URL,
-                )
+                logger.warning("VOICEVOX not running — falling back to text output.")
             self._voicevox_available = False
             return None
-        except requests.exceptions.Timeout:
-            logger.warning("VOICEVOX request timed out")
-            return None
         except Exception as e:
-            logger.error("VOICEVOX unexpected error: %s", e)
+            logger.error("VOICEVOX error: %s", e)
             return None
 
     def _play_wav(self, wav_bytes: bytes) -> None:
-        """WAV バイト列を pyaudio で再生する"""
         if not _PYAUDIO_AVAILABLE:
-            logger.warning("pyaudio not installed — skipping audio playback")
+            logger.warning("pyaudio not installed — skipping playback")
             return
-
         try:
             buf = io.BytesIO(wav_bytes)
             with wave.open(buf, "rb") as wf:
                 p = pyaudio.PyAudio()
-                stream = p.open(
+                st = p.open(
                     format=p.get_format_from_width(wf.getsampwidth()),
                     channels=wf.getnchannels(),
                     rate=wf.getframerate(),
@@ -135,83 +132,134 @@ class VoiceOutput:
                 )
                 data = wf.readframes(AUDIO_CHUNK_SIZE)
                 while data:
-                    stream.write(data)
+                    st.write(data)
                     data = wf.readframes(AUDIO_CHUNK_SIZE)
-                stream.stop_stream()
-                stream.close()
+                st.stop_stream()
+                st.close()
                 p.terminate()
         except Exception as e:
             logger.error("Audio playback error: %s", e)
 
 
 # ---------------------------------------------------------------------------
-# 音声入力
+# 音声入力（faster-whisper）
 # ---------------------------------------------------------------------------
 
 class VoiceInput:
     """
-    マイクから音声を取得し、Google Speech-to-Text で日本語テキストに変換する。
-    マイクが利用できない場合は None を返す。
+    PyAudio でマイクから音声を取得し、faster-whisper でローカル認識する。
+
+    Google STT との違い:
+      - オフライン動作（ネット不要）
+      - 認識精度が高い（small モデルで実用レベル）
+      - 初回起動時にモデルロードで数秒かかる
     """
 
-    def __init__(self) -> None:
-        self.recognizer = sr.Recognizer()
-        self._mic: sr.Microphone | None = None
-        self._mic_available = self._init_microphone()
+    def __init__(self, model_size: str = WHISPER_MODEL_SIZE) -> None:
+        self._model: "WhisperModel | None" = None
+        self._pa: "pyaudio.PyAudio | None" = None
+        self._mic_available = False
+        self._init(model_size)
 
-    def _init_microphone(self) -> bool:
-        """マイクを初期化し、環境ノイズに適応する"""
+    def _init(self, model_size: str) -> None:
+        if not _WHISPER_AVAILABLE:
+            logger.warning("faster-whisper not installed. Run: pip install faster-whisper")
+            return
+        if not _PYAUDIO_AVAILABLE:
+            logger.warning("pyaudio not installed.")
+            return
         try:
-            self._mic = sr.Microphone()
-            with self._mic as source:
-                logger.info("Adjusting for ambient noise (1s)...")
-                self.recognizer.adjust_for_ambient_noise(source, duration=1)
-            logger.info("Microphone initialized")
-            return True
-        except OSError as e:
-            logger.warning("Microphone not available: %s", e)
-            return False
+            logger.info("Loading Whisper model '%s' (first run may take a moment)...", model_size)
+            self._model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            self._pa = pyaudio.PyAudio()
+            self._mic_available = True
+            logger.info("VoiceInput (faster-whisper/%s) ready", model_size)
         except Exception as e:
-            logger.error("Microphone init error: %s", e)
-            return False
+            logger.error("VoiceInput init error: %s", e)
 
-    def listen(self, timeout: float = 3.0, phrase_time_limit: float = 5.0) -> str | None:
+    def listen(self, timeout: float = 3.0, phrase_time_limit: float = 8.0) -> str | None:
         """
-        マイクを指定秒数リッスンし、認識テキストを返す。
+        マイクから音声を取得し、認識テキストを返す。
 
-        Args:
-            timeout: 発話開始を待つ最大秒数
-            phrase_time_limit: 1発話の最大秒数
-        Returns:
-            認識テキスト（無音・失敗時は None）
+        手順:
+          1. 発話開始を最大 timeout 秒待つ
+          2. 発話区間を録音（最大 phrase_time_limit 秒）
+          3. SILENCE_FRAMES 連続の無音で録音終了
+          4. faster-whisper で転写
         """
-        if not self._mic_available or self._mic is None:
+        if not self._mic_available or self._model is None or self._pa is None:
             return None
 
+        stream = None
         try:
-            with self._mic as source:
-                audio = self.recognizer.listen(
-                    source,
-                    timeout=timeout,
-                    phrase_time_limit=phrase_time_limit,
-                )
+            stream = self._pa.open(
+                format=pyaudio.paFloat32,
+                channels=1,
+                rate=WHISPER_RATE,
+                input=True,
+                frames_per_buffer=WHISPER_CHUNK,
+            )
 
-            text: str = self.recognizer.recognize_google(audio, language="ja-JP")
-            logger.info("Recognized speech: %s", text)
-            return text
+            frames: list[bytes] = []
+            speech_started = False
+            silence_count  = 0
+            wait_count     = 0
+            timeout_frames = int(timeout * WHISPER_RATE / WHISPER_CHUNK)
+            max_frames     = int(phrase_time_limit * WHISPER_RATE / WHISPER_CHUNK)
 
-        except sr.WaitTimeoutError:
-            # 発話なし：正常系
+            while True:
+                data    = stream.read(WHISPER_CHUNK, exception_on_overflow=False)
+                samples = np.frombuffer(data, dtype=np.float32)
+                rms     = float(np.sqrt(np.mean(samples ** 2)))
+
+                if not speech_started:
+                    wait_count += 1
+                    if wait_count > timeout_frames:
+                        return None   # 発話なしでタイムアウト
+                    if rms > SILENCE_RMS:
+                        speech_started = True
+                        frames.append(data)
+                else:
+                    frames.append(data)
+                    if rms < SILENCE_RMS:
+                        silence_count += 1
+                        if silence_count >= SILENCE_FRAMES:
+                            break     # 無音が続いたので発話終了
+                    else:
+                        silence_count = 0
+                    if len(frames) >= max_frames:
+                        break         # 最大録音時間に達した
+
+            if not frames:
+                return None
+
+            audio = np.frombuffer(b"".join(frames), dtype=np.float32)
+            segments, _ = self._model.transcribe(
+                audio,
+                language="ja",
+                beam_size=5,
+                vad_filter=True,   # faster-whisper 内蔵 VAD で誤認識抑制
+            )
+            text = "".join(s.text for s in segments).strip()
+            if text:
+                logger.info("Recognized: %s", text)
+                return text
             return None
-        except sr.UnknownValueError:
-            logger.debug("Speech not understood")
-            return None
-        except sr.RequestError as e:
-            logger.error("Google STT request error: %s", e)
-            return None
+
         except Exception as e:
             logger.error("VoiceInput.listen error: %s", e)
             return None
+        finally:
+            if stream:
+                stream.stop_stream()
+                stream.close()
+
+    def __del__(self) -> None:
+        if self._pa:
+            try:
+                self._pa.terminate()
+            except Exception:
+                pass
 
     @property
     def available(self) -> bool:

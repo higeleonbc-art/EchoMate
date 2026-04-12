@@ -11,6 +11,7 @@ import threading
 import random
 import time
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class GameEvent:
     """ゲームイベントを表すデータクラス"""
 
     def __init__(self, event_type: str, data: dict | None = None):
+        self.id = str(uuid.uuid4())          # ミニ会話トラッキング用の一意ID
         self.event_type = event_type
         self.data = data or {}
         self.priority = EVENT_PRIORITY.get(event_type, 3)

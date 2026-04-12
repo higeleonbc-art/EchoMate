@@ -297,8 +297,133 @@ def _fallback_manual() -> None:
 
 
 # ---------------------------------------------------------------------------
+# ROI セレクターモード
+# ---------------------------------------------------------------------------
+
+# ゾーン定義テンプレート（ROI モード用）
+_ROI_ZONE_TEMPLATES = [
+    ("hp_bar_low",   "low_hp",   "HP バーを囲んでください（左下付近）",           "color_threshold", {"color": "red",    "threshold": 0.40, "min_hits": 2, "window": 3}, 5.0),
+    ("kill_feed",    "kill",     "キルフィードエリアを囲んでください（右上付近）", "frame_diff",      {"threshold": 20,   "changed_ratio": 0.08, "min_hits": 2, "window": 3}, 3.0),
+    ("death_screen", "death",    "デス演出の中央部分を囲んでください",             "brightness",      {"mode": "drop",    "threshold": 40,  "min_hits": 3, "window": 4}, 8.0),
+    ("screen_flash", "big_play", "エフェクトが出やすいエリアを囲んでください",     "frame_diff",      {"threshold": 25,   "changed_ratio": 0.15, "min_hits": 2, "window": 3}, 4.0),
+]
+
+
+def run_roi_mode() -> None:
+    """
+    スクリーンショットをキャプチャし、OpenCV ウィンドウ上で
+    マウスドラッグにより検出ゾーンを直感的に設定する。
+
+    使い方: python setup_wizard.py --roi
+    """
+    try:
+        import cv2
+        import mss
+        import numpy as np
+    except ImportError as e:
+        print(f"[!!] 必要なライブラリがありません: {e}")
+        print("     pip install opencv-python mss")
+        return
+
+    print("=" * 60)
+    print("  EchoMate ROI セレクター")
+    print("=" * 60)
+    print()
+    print("ゲームを起動してゲーム画面が見える状態にしてください。")
+    try:
+        input("準備できたら Enter を押してください...")
+    except KeyboardInterrupt:
+        return
+
+    # スクリーンショット取得
+    with mss.mss() as sct:
+        monitor = sct.monitors[1]   # プライマリモニター
+        raw = sct.grab(monitor)
+    img = cv2.cvtColor(np.array(raw), cv2.COLOR_BGRA2BGR)
+
+    zones = []
+    print("\n各検出ゾーンをドラッグで選択してください。")
+    print("  Space/Enter → 確定   C → スキップ\n")
+
+    for name, event_type, instruction, method, params, cooldown in _ROI_ZONE_TEMPLATES:
+        win_title = f"[EchoMate ROI] {instruction}"
+        print(f"  {instruction}")
+        roi = cv2.selectROI(win_title, img, fromCenter=False, showCrosshair=True)
+        cv2.destroyAllWindows()
+
+        x, y, w, h = roi
+        if w > 0 and h > 0:
+            zones.append({
+                "name":       name,
+                "region":     {"top": int(y), "left": int(x), "width": int(w), "height": int(h)},
+                "event_type": event_type,
+                "method":     method,
+                "params":     params,
+                "cooldown":   cooldown,
+                "enabled":    True,
+            })
+            print(f"  [OK] ({x}, {y}) {w}x{h} で登録\n")
+        else:
+            print("  [SKIP]\n")
+
+    if not zones:
+        print("ゾーンが1件も登録されませんでした。")
+        return
+
+    config = {
+        "_generated_by": "ROI selector",
+        "zones": zones,
+        "audio_rules": default_audio_rules(),
+    }
+    output_path = "cv_config.json"
+    _save_config(config, output_path)
+    print(f"[OK] {len(zones)} ゾーンを {os.path.abspath(output_path)} に保存しました。")
+    print("     EchoMate を起動してください: start.bat\n")
+
+
+# ---------------------------------------------------------------------------
+# プリセット読込モード
+# ---------------------------------------------------------------------------
+
+AVAILABLE_PRESETS = ["valorant", "apex", "fortnite"]
+
+
+def run_preset_mode(preset_name: str) -> None:
+    """
+    presets/<name>.json を cv_config.json としてコピーする。
+
+    使い方: python setup_wizard.py --preset valorant
+    """
+    import shutil
+
+    preset_path = os.path.join("presets", f"{preset_name}.json")
+    if not os.path.exists(preset_path):
+        print(f"[!!] プリセットが見つかりません: {preset_path}")
+        print(f"     利用可能: {', '.join(AVAILABLE_PRESETS)}")
+        return
+
+    shutil.copy(preset_path, "cv_config.json")
+    print(f"[OK] プリセット '{preset_name}' を cv_config.json に適用しました。")
+    print("     座標は 1920x1080 基準です。別解像度の場合は --roi で再設定してください。\n")
+
+
+# ---------------------------------------------------------------------------
 # エントリーポイント
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    run_wizard()
+    import sys
+
+    args = sys.argv[1:]
+
+    if "--roi" in args:
+        run_roi_mode()
+    elif "--preset" in args:
+        idx = args.index("--preset")
+        if idx + 1 < len(args):
+            run_preset_mode(args[idx + 1])
+        else:
+            print("使い方: python setup_wizard.py --preset <name>")
+            print(f"  利用可能: {', '.join(AVAILABLE_PRESETS)}")
+    else:
+        run_wizard()
