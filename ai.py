@@ -10,6 +10,11 @@ ai.py - AI処理モジュール
   - validate_response: 文字列検証可能な制約をコードで強制（max 3 retry）
   - get_followup: ミニ会話の step2 / step3 用メソッド
   - Ollama API: system パラメータでキャラクターの system_prompt を分離
+
+主な変更点（v3 - 良き隣人システム）:
+  - UserProfile をオプションで受け取り、全プロンプトにRAG注入
+  - set_user_profile(): 外部からプロファイルを差し込める
+  - 成長観察ヒントのプロンプト内注入サポート
 """
 
 import json
@@ -17,6 +22,7 @@ import logging
 import time
 import random
 import re
+from typing import Optional
 
 import requests
 
@@ -79,8 +85,13 @@ class AICompanion:
         self._conversation_history: list[dict[str, str]] = []
         self._characters: dict = {}
         self.current_character: dict = {}
+        self._user_profile: Optional[object] = None   # UserProfile（良き隣人システム）
         self._load_characters()
         self.set_character(DEFAULT_CHARACTER)
+
+    def set_user_profile(self, profile: object) -> None:
+        """UserProfile インスタンスを設定する（良き隣人システム連携用）"""
+        self._user_profile = profile
 
     # ------------------------------------------------------------------
     # キャラクター管理
@@ -138,7 +149,13 @@ class AICompanion:
         )
         return self._call_with_validation(prompt, max_chars=15)
 
-    def get_response(self, player_input: str, memory: dict, state=None) -> str:
+    def get_response(
+        self,
+        player_input: str,
+        memory: dict,
+        state=None,
+        growth_hint: Optional[str] = None,
+    ) -> str:
         """プレイヤー発言に対する会話応答を返す"""
         memory_ctx  = self._build_memory_context(memory)
         history_ctx = self._build_history_context()
@@ -152,7 +169,7 @@ class AICompanion:
             "ルール: 1〜2文・最大40文字・フランク・時々質問・日本語のみ\n"
             "返答:"
         )
-        response = self._call_with_validation(prompt, max_chars=40)
+        response = self._call_with_validation(prompt, max_chars=40, growth_hint=growth_hint)
 
         self._conversation_history.append({"player": player_input, "ai": response})
         if len(self._conversation_history) > 10:
@@ -192,7 +209,12 @@ class AICompanion:
         )
         return self._call_with_validation(prompt, max_chars=30)
 
-    def get_proactive_message(self, memory: dict, state=None) -> str:
+    def get_proactive_message(
+        self,
+        memory: dict,
+        state=None,
+        growth_hint: Optional[str] = None,
+    ) -> str:
         """プレイヤーが無言のとき、自発的に話題を振るメッセージを返す"""
         memory_ctx = self._build_memory_context(memory)
         state_ctx  = state.summary() if state else ""
@@ -204,7 +226,7 @@ class AICompanion:
             "ルール: 1文・最大30文字・フランク・質問かコメント\n"
             "発言:"
         )
-        return self._call_with_validation(prompt, max_chars=30)
+        return self._call_with_validation(prompt, max_chars=30, growth_hint=growth_hint)
 
     def get_tendency_label(self, event_type: str) -> str | None:
         return TENDENCY_MAP.get(event_type)
@@ -249,20 +271,49 @@ class AICompanion:
     # プライベートメソッド
     # ------------------------------------------------------------------
 
-    def _call_with_validation(self, prompt: str, max_chars: int = 40) -> str:
+    def _build_profile_context(self) -> str:
+        """UserProfile からRAGコンテキストを生成する（プロファイル未設定なら空文字）"""
+        if self._user_profile is None:
+            return ""
+        try:
+            return self._user_profile.get_summary_for_prompt()
+        except Exception:
+            return ""
+
+    def _call_with_validation(
+        self,
+        prompt: str,
+        max_chars: int = 40,
+        growth_hint: Optional[str] = None,
+    ) -> str:
         """
         LLM を呼び出し、validate_response が通るまで最大 MAX_VALIDATE_RETRY 回リトライする。
         すべて失敗した場合はフォールバック文字列を返す。
+
+        Args:
+            prompt:      ユーザー向けプロンプト本文
+            max_chars:   応答の最大文字数
+            growth_hint: 成長観察ヒント（Noneなら注入しない）
         """
         system_prompt = self.current_character.get("system_prompt", "")
         rules_text = ""
         if self.current_character.get("rules"):
             rules_text = "ルール:\n" + "\n".join(f"- {r}" for r in self.current_character["rules"])
 
-        full_prompt = f"{rules_text}\n\n{prompt}" if rules_text else prompt
+        # ユーザープロファイルを先頭に注入（RAG）
+        profile_ctx = self._build_profile_context()
+        prefix_parts = []
+        if profile_ctx:
+            prefix_parts.append(profile_ctx)
+        if growth_hint:
+            prefix_parts.append(f"（観察メモ: {growth_hint}）")
+        prefix = "\n".join(prefix_parts)
+
+        base_prompt = f"{rules_text}\n\n{prompt}" if rules_text else prompt
+        full_prompt  = f"{prefix}\n\n{base_prompt}" if prefix else base_prompt
 
         for attempt in range(1, MAX_VALIDATE_RETRY + 1):
-            raw = self._call_ollama(full_prompt, system_prompt, max_chars)
+            raw = self._call_ollama(full_prompt, system_prompt, max_chars)  # type: ignore[arg-type]
             if self.validate_response(raw):
                 if attempt > 1:
                     logger.debug("Validation passed on attempt %d", attempt)

@@ -1,12 +1,13 @@
 """
-main.py - EchoMate メインスクリプト（v2）
+main.py - EchoMate メインスクリプト（v3 - 良き隣人システム）
 
-変更点:
-  - StateManager: 単発イベント → 状態（HP/テンション/連続キル）に変換
-  - MiniConversationManager: step1 後に step2(5s)・step3(10s) を時間差で発火
-  - キャラクター選択: --character <name> で起動時に指定（デフォルト: kid）
-  - VoiceOutput.set_speaker(): キャラ切替時に VOICEVOX 話者を自動変更
-  - AI プロンプトに PlayerState を組み込む
+変更点（v3）:
+  - PatronDB:       会話ログをSQLiteに記録（最大1000件・ローテーション）
+  - UserProfile:    ユーザー特性をJSONで永続管理
+  - PatronAnalyzer: 50〜100件蓄積時にバッチ分析してプロファイルを更新
+  - ObserverModule: 依存誘導・ロマンチック表現のフィルタリング・ストレス検知
+  - AICompanion:    UserProfileをRAG注入（プロファイルに基づいた応答調整）
+  - セッション終了時に分析を同期実行してプロファイルを最終更新
 
 アーキテクチャ:
   VoiceInputThread ──────────────────────────────────────┐
@@ -16,12 +17,15 @@ main.py - EchoMate メインスクリプト（v2）
                                     │
                            EventProcessorThread
                            ↓                 ↓
-                      StateManager       AICompanion
+                      StateManager       AICompanion ← UserProfile（RAG）
                                               ↓
                                MiniConversationManager
                                (step2: +5s, step3: +10s)
                                               ↓
+                                       ObserverModule（安全フィルター）
+                                              ↓
                                        VoiceOutput
+                                       PatronDB（ログ記録）
 """
 
 import logging
@@ -38,6 +42,10 @@ from voice import VoiceOutput, VoiceInput
 from opencv_detector import OpenCVDetector
 from audio_detector import AudioDetector
 from state_manager import StateManager
+from patron_db import PatronDB
+from user_profile import UserProfile
+from patron_analyzer import PatronAnalyzer
+from observer import ObserverModule
 
 # ---------------------------------------------------------------------------
 # ロギング
@@ -149,6 +157,15 @@ class EchoMate:
         self.voice_output  = VoiceOutput()
         self.voice_input   = VoiceInput()
 
+        # 良き隣人システム
+        self.patron_db   = PatronDB()
+        self.user_profile = UserProfile()
+        self.analyzer    = PatronAnalyzer(self.patron_db, self.user_profile)
+        self.observer    = ObserverModule(self.user_profile)
+
+        # AIにプロファイルを接続（RAG）
+        self.ai.set_user_profile(self.user_profile)
+
         # キャラクター適用
         self._apply_character(character)
 
@@ -237,6 +254,19 @@ class EchoMate:
         if self.audio_detector:
             self.audio_detector.stop()
         self.event_manager.save_memory()
+
+        # セッション終了時の分析・プロファイル更新
+        try:
+            session_logs = self.patron_db.get_total_log_count()
+            self.user_profile.increment_session(session_logs)
+            if self.patron_db.count_unanalyzed() > 0:
+                self.logger.info("Running final patron analysis on session end...")
+                self.analyzer.analyze_sync()
+            else:
+                self.user_profile.save()
+        except Exception as e:
+            self.logger.error("Session-end analysis error: %s", e)
+
         self.logger.info("EchoMate stopped.")
         print("EchoMate stopped.")
 
@@ -289,12 +319,32 @@ class EchoMate:
                 since_last_pro = now - self._last_proactive_time
                 if silence >= self.SILENCE_THRESHOLD and since_last_pro >= self.PROACTIVE_COOLDOWN:
                     self.logger.info("Silence %.0fs — triggering proactive message", silence)
-                    memory  = self.event_manager.get_memory()
-                    state   = self.state_manager.get_state()
-                    message = self.ai.get_proactive_message(memory, state)
+                    memory = self.event_manager.get_memory()
+                    state  = self.state_manager.get_state()
+
+                    # 成長観察ヒントを低頻度で注入
+                    growth_hint = None
+                    if self.observer.should_show_growth_hint():
+                        growth_hint = self.observer.get_growth_hint_message()
+
+                    message = self.ai.get_proactive_message(memory, state, growth_hint=growth_hint)
+
+                    # 安全フィルター
+                    tension      = state.to_dict().get("tension", 0.0) if hasattr(state, "to_dict") else 0.0
+                    stress_score = self.observer.estimate_stress(tension)
+                    message      = self.observer.filter_response(message, stress_score)
+
                     print(f"\n[EchoMate→] {message}")
                     self._last_proactive_time = now
                     self._speak_async(message)
+
+                    # ログ記録
+                    self._log_interaction(
+                        event_type="proactive",
+                        ai_response=message,
+                        tags=["proactive"],
+                        emotion_score=0.0,
+                    )
             except Exception as e:
                 self.logger.error("ProactiveChat error: %s", e)
 
@@ -326,9 +376,20 @@ class EchoMate:
         self._last_speech_time = time.time()
         self.logger.info("Player speech: %s", player_text)
 
-        memory   = self.event_manager.get_memory()
-        state    = self.state_manager.get_state()
-        response = self.ai.get_response(player_text, memory, state)
+        memory = self.event_manager.get_memory()
+        state  = self.state_manager.get_state()
+
+        # 成長観察ヒントを低頻度で注入
+        growth_hint = None
+        if self.observer.should_show_growth_hint():
+            growth_hint = self.observer.get_growth_hint_message()
+
+        response = self.ai.get_response(player_text, memory, state, growth_hint=growth_hint)
+
+        # 安全フィルター（ObserverModule）
+        tension      = state.to_dict().get("tension", 0.0) if hasattr(state, "to_dict") else 0.0
+        stress_score = self.observer.estimate_stress(tension)
+        response     = self.observer.filter_response(response, stress_score)
 
         print(f"\n{'─' * 40}")
         print(f"[Player]   {player_text}")
@@ -338,14 +399,71 @@ class EchoMate:
         self.event_manager.update_memory("player_speech", player_text)
         self._speak_async(response)
 
+        # ログ記録（PatronDB）
+        self._log_interaction(
+            event_type="player_speech",
+            ai_response=response,
+            user_input=player_text,
+            tags=["speech"],
+            emotion_score=0.0,
+        )
+
+    # ログ記録とバッチ分析トリガーの共通処理
+    _EMOTION_SCORE_MAP: dict = {
+        "kill":     0.3,
+        "big_play": 0.4,
+        "death":   -0.3,
+        "low_hp":  -0.2,
+    }
+    _TAGS_MAP: dict = {
+        "kill":     ["game", "kill"],
+        "death":    ["game", "death"],
+        "low_hp":   ["game", "danger"],
+        "big_play": ["game", "achievement"],
+        "player_speech": ["speech"],
+    }
+
+    def _log_interaction(
+        self,
+        event_type: str,
+        ai_response: str,
+        user_input: Optional[str] = None,
+        tags: Optional[list] = None,
+        emotion_score: float = 0.0,
+    ) -> None:
+        """PatronDB にログを記録し、必要ならバッチ分析をトリガーする"""
+        try:
+            self.patron_db.add_log(
+                event_type=event_type,
+                ai_response=ai_response,
+                user_input=user_input,
+                tags=tags or self._TAGS_MAP.get(event_type, ["game"]),
+                emotion_score=emotion_score,
+            )
+            if self.patron_db.should_trigger_analysis():
+                self.logger.info("Batch analysis triggered (%d unanalyzed logs)",
+                                 self.patron_db.count_unanalyzed())
+                self.analyzer.analyze_async()
+        except Exception as e:
+            self.logger.error("PatronDB log error: %s", e)
+
     def _handle_game_event(self, event: GameEvent) -> None:
         self.logger.info("Game event: %s", event.event_type)
 
         # 状態を更新
         state = self.state_manager.update(event.event_type)
 
+        # デス記録（ストレス推定に使用）
+        if event.event_type == "death":
+            self.observer.record_death()
+
         # step1: 即時リアクション
         reaction = self.ai.get_reaction(event.event_type, state, use_template=True)
+
+        # 安全フィルター
+        tension      = state.to_dict().get("tension", 0.0) if hasattr(state, "to_dict") else 0.0
+        stress_score = self.observer.estimate_stress(tension)
+        reaction     = self.observer.filter_response(reaction, stress_score)
 
         label = {
             "kill": "KILL", "death": "DEATH",
@@ -364,6 +482,13 @@ class EchoMate:
         # step2 / step3: ミニ会話予約（player_speech は対象外）
         memory = self.event_manager.get_memory()
         self.mini_conv.start(event, state.to_dict(), memory)
+
+        # ログ記録（PatronDB）
+        self._log_interaction(
+            event_type=event.event_type,
+            ai_response=reaction,
+            emotion_score=self._EMOTION_SCORE_MAP.get(event.event_type, 0.0),
+        )
 
     # ------------------------------------------------------------------
     # ユーティリティ
