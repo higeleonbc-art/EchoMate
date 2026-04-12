@@ -32,6 +32,7 @@ import random
 import argparse
 
 from event import EventManager, GameEvent, generate_dummy_event
+from typing import Callable, Optional
 from ai import AICompanion
 from voice import VoiceOutput, VoiceInput
 from opencv_detector import OpenCVDetector
@@ -136,6 +137,8 @@ class EchoMate:
         character: str = "kid",
         enable_cv: bool = True,
         enable_audio: bool = True,
+        enable_dummy: bool = False,
+        speech_callback: Optional[Callable[[str], None]] = None,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
 
@@ -155,6 +158,10 @@ class EchoMate:
         # 検出器
         self.cv_detector    = OpenCVDetector(self.event_manager) if enable_cv    else None
         self.audio_detector = AudioDetector(self.event_manager)  if enable_audio else None
+
+        # デバッグ・コールバック
+        self.enable_dummy      = enable_dummy
+        self._speech_callback  = speech_callback
 
         # タイミング管理
         self.running              = False
@@ -177,16 +184,36 @@ class EchoMate:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
+        """起動してメインスレッドをブロックする（CLI用）"""
+        self._start_threads()
+        try:
+            while self.running:
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            print("\n\nStopping EchoMate...")
+            self.stop()
+
+    def start_background(self) -> None:
+        """GUI から呼び出す非ブロッキング起動。スレッドを開始して即座に返る。"""
+        self._start_threads()
+
+    def _start_threads(self) -> None:
+        """スレッドと検出器を起動する共通処理"""
         self.running = True
         self._print_banner()
 
-        for name, target in [
+        thread_targets = [
             ("VoiceInput",     self._voice_input_loop),
-            ("EventGenerator", self._event_generator_loop),
             ("EventProcessor", self._event_processor_loop),
             ("ProactiveChat",  self._proactive_loop),
             ("StateTick",      self._state_tick_loop),
-        ]:
+        ]
+        # ダミーイベントは --debug フラグが指定された場合のみ起動
+        if self.enable_dummy:
+            thread_targets.insert(1, ("EventGenerator", self._event_generator_loop))
+            self.logger.info("Debug mode: dummy event generator enabled")
+
+        for name, target in thread_targets:
             t = threading.Thread(target=target, name=name, daemon=True)
             t.start()
             self._threads.append(t)
@@ -202,13 +229,6 @@ class EchoMate:
             print("[Audio] Audio spike detection enabled")
         elif self.audio_detector:
             print("[Audio] pyaudio not installed — audio detection disabled")
-
-        try:
-            while self.running:
-                time.sleep(0.1)
-        except KeyboardInterrupt:
-            print("\n\nStopping EchoMate...")
-            self.stop()
 
     def stop(self) -> None:
         self.running = False
@@ -350,6 +370,12 @@ class EchoMate:
     # ------------------------------------------------------------------
 
     def _speak_async(self, text: str) -> None:
+        # GUI 吹き出し UI へテキストを通知する
+        if self._speech_callback:
+            try:
+                self._speech_callback(text)
+            except Exception as e:
+                self.logger.debug("speech_callback error: %s", e)
         threading.Thread(
             target=self.voice_output.speak,
             args=(text,),
@@ -396,6 +422,7 @@ def main() -> None:
         character=args.character,
         enable_cv=not args.no_cv,
         enable_audio=not args.no_audio,
+        enable_dummy=args.debug,
     )
     companion.start()
 
