@@ -396,9 +396,15 @@ def run_preset_mode(preset_name: str) -> None:
     """
     import shutil
 
+    # 許可リストによる検証（パストラバーサル防止）
+    if preset_name not in AVAILABLE_PRESETS:
+        print(f"[!!] 不明なプリセット名: {preset_name!r}")
+        print(f"     利用可能: {', '.join(AVAILABLE_PRESETS)}")
+        return
+
     preset_path = os.path.join("presets", f"{preset_name}.json")
     if not os.path.exists(preset_path):
-        print(f"[!!] プリセットが見つかりません: {preset_path}")
+        print(f"[!!] プリセットファイルが見つかりません: {preset_path}")
         print(f"     利用可能: {', '.join(AVAILABLE_PRESETS)}")
         return
 

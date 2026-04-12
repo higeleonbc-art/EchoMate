@@ -40,7 +40,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 CHUNK       = 1024          # 1 チャンクのサンプル数
-FORMAT      = None          # pyaudio.paFloat32 (起動時に設定)
 CHANNELS    = 1             # モノラル
 RATE        = 44100         # サンプリングレート（Hz）
 

@@ -42,7 +42,15 @@ from state_manager import StateManager
 # ロギング
 # ---------------------------------------------------------------------------
 
-def _setup_logging(level: int = logging.DEBUG) -> None:
+def _setup_logging(level: int = logging.INFO) -> None:
+    """
+    ログを標準出力とファイルの両方に出力する。
+
+    デフォルトは INFO レベル。
+    echomate.log にはプレイヤーの発言・イベントが記録される。
+    ファイルを他者と共有する際はプライバシーに注意すること。
+    デバッグ時は --debug フラグで DEBUG レベルに切り替える。
+    """
     fmt = "%(asctime)s [%(levelname)-8s] %(name)s: %(message)s"
     logging.basicConfig(
         level=level,
@@ -372,12 +380,18 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--no-cv",    action="store_true", help="OpenCV 検出を無効化")
     p.add_argument("--no-audio", action="store_true", help="音声検出を無効化")
+    p.add_argument(
+        "--debug",
+        action="store_true",
+        help="DEBUG レベルのログを有効化（echomate.log に詳細を記録）",
+    )
     return p.parse_args()
 
 
 def main() -> None:
-    _setup_logging(level=logging.DEBUG)
     args = _parse_args()
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    _setup_logging(level=log_level)
     companion = EchoMate(
         character=args.character,
         enable_cv=not args.no_cv,

@@ -13,6 +13,7 @@ EventManager とは独立して StateManager が状態を保持する。
 テンションは最後のイベントから TENSION_DECAY_START 秒後に自動減衰する。
 """
 
+import threading
 import time
 import logging
 from dataclasses import dataclass, field
@@ -100,12 +101,20 @@ class StateManager:
 
     def __init__(self) -> None:
         self.state = PlayerState()
+        self._lock = threading.Lock()
 
     def update(self, event_type: str) -> PlayerState:
         """
         イベント種別を受け取り状態を更新して返す。
         EventProcessor から各イベント処理後に呼び出す。
+        StateTick スレッドと EventProcessor スレッドの両方から呼ばれるため
+        ロックで保護する。
         """
+        with self._lock:
+            return self._update_locked(event_type)
+
+    def _update_locked(self, event_type: str) -> PlayerState:
+        """ロック取得済みの状態で呼ぶ内部更新メソッド"""
         s = self.state
         s.last_event_type = event_type
         s.last_event_time = time.time()
@@ -143,15 +152,17 @@ class StateManager:
         定期的に呼び出してテンションを自然減衰させる。
         最後のイベントから TENSION_DECAY_START 秒以上経過していれば減衰。
         """
-        s = self.state
-        idle_sec = time.time() - s.last_event_time
+        with self._lock:
+            s = self.state
+            idle_sec = time.time() - s.last_event_time
 
-        if idle_sec > TENSION_DECAY_START:
-            s.tension = max(0.0, s.tension - TENSION_DECAY_RATE * (idle_sec / 10.0))
+            if idle_sec > TENSION_DECAY_START:
+                s.tension = max(0.0, s.tension - TENSION_DECAY_RATE * (idle_sec / 10.0))
 
-        if idle_sec > 30.0 and s.combat_state == COMBAT_ACTIVE:
-            s.combat_state = COMBAT_IDLE
-            logger.debug("CombatState → IDLE (idle %.0fs)", idle_sec)
+            if idle_sec > 30.0 and s.combat_state == COMBAT_ACTIVE:
+                s.combat_state = COMBAT_IDLE
+                logger.debug("CombatState → IDLE (idle %.0fs)", idle_sec)
 
     def get_state(self) -> PlayerState:
-        return self.state
+        with self._lock:
+            return self.state
