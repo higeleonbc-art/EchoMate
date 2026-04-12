@@ -1,0 +1,78 @@
+{
+  "_comment": "setup_wizard.py を実行するとこのファイルが自動生成されます",
+  "_comment2": "手動調整: region の top/left/width/height をゲームに合わせて変更してください",
+  "zones": [
+    {
+      "_comment": "HP バーが赤くなったら low_hp を発火（左下 HP バー想定）",
+      "name": "hp_bar_low",
+      "region": { "top": 880, "left": 60, "width": 220, "height": 18 },
+      "event_type": "low_hp",
+      "method": "color_threshold",
+      "params": { "color": "red", "threshold": 0.40 },
+      "cooldown": 5.0,
+      "enabled": true
+    },
+    {
+      "_comment": "右上キルフィードに黄色テキストが出たら kill を発火",
+      "name": "kill_feed",
+      "region": { "top": 10, "left": 1700, "width": 200, "height": 80 },
+      "event_type": "kill",
+      "method": "color_threshold",
+      "params": { "color": "yellow", "threshold": 0.12 },
+      "cooldown": 3.0,
+      "enabled": true
+    },
+    {
+      "_comment": "中央付近の急激な画面変化（フラッシュ・爆発エフェクト）で big_play を発火",
+      "name": "screen_flash",
+      "region": { "top": 270, "left": 480, "width": 960, "height": 540 },
+      "event_type": "big_play",
+      "method": "frame_diff",
+      "params": {
+        "threshold": 25,
+        "changed_ratio": 0.15,
+        "pixel_threshold": 15
+      },
+      "cooldown": 4.0,
+      "enabled": true
+    },
+    {
+      "_comment": "画面中央が急に暗くなったら death を発火（デス暗転演出）",
+      "name": "death_screen",
+      "region": { "top": 216, "left": 384, "width": 1152, "height": 648 },
+      "event_type": "death",
+      "method": "brightness",
+      "params": { "mode": "drop", "threshold": 40 },
+      "cooldown": 8.0,
+      "enabled": true
+    },
+    {
+      "_comment": "テンプレートマッチングのサンプル（templates/big_play.png を用意してから enabled: true にする）",
+      "name": "big_play_icon",
+      "region": { "top": 300, "left": 800, "width": 300, "height": 100 },
+      "event_type": "big_play",
+      "method": "template",
+      "params": { "template_path": "templates/big_play.png", "threshold": 0.80 },
+      "cooldown": 5.0,
+      "enabled": false
+    }
+  ],
+  "audio_rules": [
+    {
+      "_comment": "爆発音・銃声などの大音量スパイクで big_play を発火",
+      "name": "explosion",
+      "event_type": "big_play",
+      "threshold": 0.35,
+      "cooldown": 3.0,
+      "enabled": true
+    },
+    {
+      "_comment": "よりデカい音（ウルト等）に反応させたい場合、threshold を上げる",
+      "name": "huge_sound",
+      "event_type": "kill",
+      "threshold": 0.55,
+      "cooldown": 2.0,
+      "enabled": false
+    }
+  ]
+}

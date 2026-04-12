@@ -1,0 +1,52 @@
+{
+  "_game": "Fortnite",
+  "_resolution": "1920x1080",
+  "_note": "HP+シールドが画面下中央に横並び。キルフィードは右上。",
+  "zones": [
+    {
+      "name": "hp_bar_low",
+      "region": { "top": 938, "left": 782, "width": 356, "height": 12 },
+      "event_type": "low_hp",
+      "method": "color_threshold",
+      "params": { "color": "red", "threshold": 0.35, "min_hits": 2, "window": 3 },
+      "cooldown": 5.0,
+      "enabled": true
+    },
+    {
+      "name": "kill_feed",
+      "region": { "top": 20, "left": 1598, "width": 322, "height": 200 },
+      "event_type": "kill",
+      "method": "frame_diff",
+      "params": { "threshold": 18, "changed_ratio": 0.07, "min_hits": 2, "window": 3 },
+      "cooldown": 3.0,
+      "enabled": true
+    },
+    {
+      "name": "death_screen",
+      "region": { "top": 270, "left": 480, "width": 960, "height": 540 },
+      "event_type": "death",
+      "method": "brightness",
+      "params": { "mode": "drop", "threshold": 38, "min_hits": 3, "window": 4 },
+      "cooldown": 8.0,
+      "enabled": true
+    },
+    {
+      "name": "elim_flash",
+      "region": { "top": 250, "left": 560, "width": 800, "height": 300 },
+      "event_type": "big_play",
+      "method": "brightness",
+      "params": { "mode": "spike", "threshold": 45, "min_hits": 2, "window": 3 },
+      "cooldown": 4.0,
+      "enabled": true
+    }
+  ],
+  "audio_rules": [
+    {
+      "name": "gunshot_spike",
+      "event_type": "big_play",
+      "threshold": 0.28,
+      "cooldown": 2.0,
+      "enabled": true
+    }
+  ]
+}
