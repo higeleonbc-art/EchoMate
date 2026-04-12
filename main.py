@@ -66,6 +66,10 @@ class EchoMate:
     DUMMY_EVENT_INTERVAL_MIN = 5.0   # ダミーイベント最小間隔（秒）
     DUMMY_EVENT_INTERVAL_MAX = 15.0  # ダミーイベント最大間隔（秒）
 
+    SILENCE_THRESHOLD   = 45.0   # この秒数以上無言なら話題を振る
+    PROACTIVE_COOLDOWN  = 120.0  # 話題振りの最小間隔（連投防止）
+    PROACTIVE_CHECK_INTERVAL = 5.0  # 無言チェックの頻度（秒）
+
     def __init__(self, enable_cv: bool = True, enable_audio: bool = True) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.event_manager = EventManager()
@@ -76,6 +80,8 @@ class EchoMate:
         self.audio_detector = AudioDetector(self.event_manager)  if enable_audio else None
         self.running = False
         self._threads: list[threading.Thread] = []
+        self._last_speech_time    = time.time()  # 最後にプレイヤーが発話した時刻
+        self._last_proactive_time = 0.0          # 最後に話題を振った時刻
 
         # 起動時にメモリを復元
         self.event_manager.load_memory()
@@ -94,6 +100,7 @@ class EchoMate:
             ("VoiceInput",      self._voice_input_loop),
             ("EventGenerator",  self._event_generator_loop),
             ("EventProcessor",  self._event_processor_loop),
+            ("ProactiveChat",   self._proactive_loop),
         ]
         for name, target in thread_specs:
             t = threading.Thread(target=target, name=name, daemon=True)
@@ -196,6 +203,34 @@ class EchoMate:
         else:
             self._handle_game_event(event)
 
+    def _proactive_loop(self) -> None:
+        """
+        プレイヤーの無言時間を監視し、一定時間を超えたら自発的に話題を振る。
+
+        SILENCE_THRESHOLD 秒以上発話がなく、
+        かつ前回の話題振りから PROACTIVE_COOLDOWN 秒以上経過していれば発火。
+        """
+        self.logger.info("ProactiveChat loop started (threshold=%.0fs)", self.SILENCE_THRESHOLD)
+
+        while self.running:
+            time.sleep(self.PROACTIVE_CHECK_INTERVAL)
+            try:
+                now = time.time()
+                silence        = now - self._last_speech_time
+                since_last_pro = now - self._last_proactive_time
+
+                if silence >= self.SILENCE_THRESHOLD and since_last_pro >= self.PROACTIVE_COOLDOWN:
+                    self.logger.info("Silence %.0fs — triggering proactive message", silence)
+                    memory = self.event_manager.get_memory()
+                    message = self.ai.get_proactive_message(memory)
+
+                    print(f"\n[EchoMate→] {message}")
+                    self._last_proactive_time = now
+                    self._speak_async(message)
+
+            except Exception as e:
+                self.logger.error("ProactiveChat loop error: %s", e)
+
     def _handle_player_speech(self, event: GameEvent) -> None:
         """プレイヤー発言への会話応答を生成する"""
         player_text = event.data.get("text", "")
@@ -203,6 +238,7 @@ class EchoMate:
             return
 
         self.logger.info("Handling player speech: %s", player_text)
+        self._last_speech_time = time.time()  # 無言タイマーをリセット
         memory = self.event_manager.get_memory()
 
         response = self.ai.get_response(player_text, memory)

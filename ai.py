@@ -52,6 +52,17 @@ FALLBACK_RESPONSES = [
     "マジで？", "それな", "うーん...", "で、どうした？", "へー"
 ]
 
+# 無言時の話題振りフォールバック（LLM 失敗時 or 高速モード用）
+PROACTIVE_TEMPLATES = [
+    "ねえ、調子どう？",
+    "何か作戦ある？",
+    "敵強い？",
+    "次どうするの？",
+    "集中してる？w",
+    "さっきのどうだった？",
+    "何考えてんの？",
+]
+
 
 class AICompanion:
     """
@@ -130,6 +141,37 @@ class AICompanion:
             self._conversation_history.pop(0)
 
         logger.debug("LLM response: %s", response)
+        return response
+
+    def get_proactive_message(self, memory: dict) -> str:
+        """
+        プレイヤーが無言のとき、自発的に話題を振るメッセージを返す。
+
+        直近のゲームイベントや傾向を参照して文脈に合った一言を生成する。
+
+        Args:
+            memory: EventManager から取得したメモリ辞書
+        Returns:
+            最大30文字の話しかけテキスト
+        """
+        memory_context = self._build_memory_context(memory)
+
+        prompt = (
+            "あなたはゲーム中の相棒AIです。\n"
+            f"{memory_context}\n"
+            "プレイヤーがしばらく無言です。自然に話題を振ってください。\n\n"
+            "ルール:\n"
+            "- 1文\n"
+            "- 最大30文字\n"
+            "- フランクな口調\n"
+            "- 質問か軽いコメントのどちらか\n"
+            "- 直近のゲーム状況に触れると尚良い\n"
+            "- 余計な説明不要\n\n"
+            "発言:"
+        )
+
+        response = self._call_ollama(prompt, max_chars=30)
+        logger.debug("Proactive message: %s", response)
         return response
 
     def get_tendency_label(self, event_type: str) -> str | None:
