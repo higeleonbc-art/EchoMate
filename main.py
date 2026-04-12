@@ -38,6 +38,7 @@ from event import EventManager, GameEvent, generate_dummy_event
 from ai import AICompanion
 from voice import VoiceOutput, VoiceInput
 from opencv_detector import OpenCVDetector
+from audio_detector import AudioDetector
 
 # ---------------------------------------------------------------------------
 # ロギング設定
@@ -65,19 +66,20 @@ class EchoMate:
     DUMMY_EVENT_INTERVAL_MIN = 5.0   # ダミーイベント最小間隔（秒）
     DUMMY_EVENT_INTERVAL_MAX = 15.0  # ダミーイベント最大間隔（秒）
 
-    def __init__(self, enable_cv: bool = True) -> None:
+    def __init__(self, enable_cv: bool = True, enable_audio: bool = True) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.event_manager = EventManager()
         self.ai = AICompanion()
         self.voice_output = VoiceOutput()
         self.voice_input = VoiceInput()
-        self.cv_detector = OpenCVDetector(self.event_manager) if enable_cv else None
+        self.cv_detector    = OpenCVDetector(self.event_manager) if enable_cv    else None
+        self.audio_detector = AudioDetector(self.event_manager)  if enable_audio else None
         self.running = False
         self._threads: list[threading.Thread] = []
 
         # 起動時にメモリを復元
         self.event_manager.load_memory()
-        self.logger.info("EchoMate initialized (cv=%s)", enable_cv)
+        self.logger.info("EchoMate initialized (cv=%s, audio=%s)", enable_cv, enable_audio)
 
     # ------------------------------------------------------------------
     # ライフサイクル
@@ -102,9 +104,16 @@ class EchoMate:
         # OpenCV 検出器を起動（ライブラリがあれば）
         if self.cv_detector and self.cv_detector.is_available():
             self.cv_detector.start()
-            print("[CV] OpenCV screen detection enabled")
+            print("[CV]    OpenCV screen detection enabled")
         elif self.cv_detector:
-            print("[CV] mss not installed — screen detection disabled (pip install mss opencv-python)")
+            print("[CV]    mss not installed — screen detection disabled (pip install mss opencv-python)")
+
+        # 音声検出器を起動（pyaudio があれば）
+        if self.audio_detector and self.audio_detector.is_available():
+            self.audio_detector.start()
+            print("[Audio] Audio spike detection enabled")
+        elif self.audio_detector:
+            print("[Audio] pyaudio not installed — audio detection disabled")
 
         try:
             while self.running:
@@ -118,6 +127,8 @@ class EchoMate:
         self.running = False
         if self.cv_detector:
             self.cv_detector.stop()
+        if self.audio_detector:
+            self.audio_detector.stop()
         self.event_manager.save_memory()
         self.logger.info("EchoMate stopped. Memory saved.")
         print("EchoMate stopped.")

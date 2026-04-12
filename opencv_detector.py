@@ -7,13 +7,14 @@ opencv_detector.py - OpenCV 画面検出モジュール
 検出方式:
   1. color_threshold : 指定領域の特定色の割合で判定（HP バー等）
   2. template        : テンプレート画像とのマッチングで判定（アイコン等）
+  3. frame_diff      : フレーム間差分で画面変化を検出（フラッシュ・エフェクト）
+  4. brightness      : 明度の急変を検出（spike=爆発フラッシュ / drop=デス暗転）
 
-設定は cv_config.json で管理。起動後もホットリロード可能な構造にしてある。
+設定は cv_config.json で管理。setup_wizard.py で自動生成可能。
 
 将来の拡張例:
   - YOLO によるキャラクター/敵検出
   - OCR によるキルフィード文字認識
-  - フレーム差分による爆発・エフェクト検出
 """
 
 import cv2
@@ -81,6 +82,9 @@ class OpenCVDetector:
         detector.stop()
     """
 
+    # 明度 EMA の適応係数（小さいほどゆっくり適応 = 急変に敏感）
+    _BRIGHTNESS_EMA_ALPHA = 0.05
+
     def __init__(
         self,
         event_manager: EventManager,
@@ -92,6 +96,10 @@ class OpenCVDetector:
         self._thread: threading.Thread | None = None
         self._last_fired: dict[str, float] = {}
         self.zones: list[DetectionZone] = []
+        # frame_diff 用：ゾーンごとの直前フレームを保持
+        self._prev_frames: dict[str, np.ndarray] = {}
+        # brightness 用：ゾーンごとの明度 EMA を保持
+        self._brightness_ema: dict[str, float] = {}
         self._load_config()
 
     # ------------------------------------------------------------------
@@ -132,7 +140,12 @@ class OpenCVDetector:
         try:
             with open(self.config_path, encoding="utf-8") as f:
                 config = json.load(f)
-            self.zones = [DetectionZone(**z) for z in config.get("zones", [])]
+            # "_" で始まるキーはコメント・メタ情報なので除外してから渡す
+            raw_zones = [
+                {k: v for k, v in z.items() if not k.startswith("_")}
+                for z in config.get("zones", [])
+            ]
+            self.zones = [DetectionZone(**z) for z in raw_zones]
             logger.info("CV config loaded: %d zones from %s", len(self.zones), self.config_path)
         except FileNotFoundError:
             logger.info("cv_config.json not found, using default zones")
@@ -197,6 +210,10 @@ class OpenCVDetector:
                 detected = self._detect_by_color(frame, zone.params)
             elif zone.method == "template":
                 detected = self._detect_by_template(frame, zone.params)
+            elif zone.method == "frame_diff":
+                detected = self._detect_by_frame_diff(frame, zone.name, zone.params)
+            elif zone.method == "brightness":
+                detected = self._detect_by_brightness(frame, zone.name, zone.params)
             else:
                 logger.warning("Unknown detection method: %s", zone.method)
 
@@ -282,6 +299,82 @@ class OpenCVDetector:
         _, max_val, _, _ = cv2.minMaxLoc(result)
         logger.debug("Template match score=%.3f threshold=%.3f", max_val, threshold)
         return float(max_val) >= threshold
+
+    def _detect_by_frame_diff(
+        self, frame: np.ndarray, zone_name: str, params: dict
+    ) -> bool:
+        """
+        直前フレームとの差分で画面変化を検出する。
+        爆発フラッシュ・スキルエフェクト・スコア表示などに有効。
+
+        params:
+            threshold      : グレー差分の平均値閾値（0〜255、デフォルト 25）
+            changed_ratio  : 変化ピクセルの割合閾値（0.0〜1.0、デフォルト 0.15）
+            pixel_threshold: 1ピクセルを「変化あり」と見なす差分値（デフォルト 15）
+        """
+        threshold       = float(params.get("threshold", 25))
+        changed_ratio   = float(params.get("changed_ratio", 0.15))
+        pixel_threshold = int(params.get("pixel_threshold", 15))
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        prev = self._prev_frames.get(zone_name)
+
+        # 初回は比較対象がないのでフレームを記録して終了
+        if prev is None or prev.shape != gray.shape:
+            self._prev_frames[zone_name] = gray
+            return False
+
+        diff = cv2.absdiff(gray, prev)
+        self._prev_frames[zone_name] = gray
+
+        mean_diff = float(diff.mean())
+        ratio = float(np.count_nonzero(diff > pixel_threshold)) / diff.size
+
+        logger.debug(
+            "FrameDiff [%s] mean=%.1f threshold=%.1f ratio=%.3f changed_ratio=%.3f",
+            zone_name, mean_diff, threshold, ratio, changed_ratio,
+        )
+        return mean_diff >= threshold or ratio >= changed_ratio
+
+    def _detect_by_brightness(
+        self, frame: np.ndarray, zone_name: str, params: dict
+    ) -> bool:
+        """
+        明度の急変を指数移動平均との差分で検出する。
+        環境光に自動適応するためシーン変化に強い。
+
+        params:
+            mode      : "spike"（明るくなる）or "drop"（暗くなる）
+            threshold : EMA からの乖離量（0〜255、デフォルト 40）
+        """
+        mode      = params.get("mode", "spike")
+        threshold = float(params.get("threshold", 40))
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        brightness = float(gray.mean())
+
+        # EMA を初期化または更新
+        if zone_name not in self._brightness_ema:
+            self._brightness_ema[zone_name] = brightness
+            return False
+
+        ema = self._brightness_ema[zone_name]
+        self._brightness_ema[zone_name] = (
+            self._BRIGHTNESS_EMA_ALPHA * brightness
+            + (1.0 - self._BRIGHTNESS_EMA_ALPHA) * ema
+        )
+
+        delta = brightness - ema
+        logger.debug(
+            "Brightness [%s] current=%.1f ema=%.1f delta=%.1f threshold=%.1f",
+            zone_name, brightness, ema, delta, threshold,
+        )
+
+        if mode == "spike":
+            return delta >= threshold
+        elif mode == "drop":
+            return delta <= -threshold
+        return False
 
     # ------------------------------------------------------------------
     # イベント発火
