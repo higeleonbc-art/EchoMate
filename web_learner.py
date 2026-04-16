@@ -2,25 +2,32 @@
 web_learner.py - Webソース提供型学習モジュール（Task6c）
 
 プレイヤーが気になる単語のURLを提供した際に:
-1. requests + BeautifulSoup でページ本文を取得
-2. LLM (Qwen) で100文字以内に要約
+1. httpx + BeautifulSoup でページ本文を取得
+2. LLM で100文字以内に要約
 3. game_knowledge.json に保存し curiosity_list.json から削除する
 """
 
 import json
 import logging
+import os
 import re
 from typing import Optional
 
-import requests
+import httpx
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 logger = logging.getLogger(__name__)
 
 CURIOSITY_LIST_PATH = "curiosity_list.json"
 GAME_KNOWLEDGE_PATH = "game_knowledge.json"
-OLLAMA_API_URL      = "http://localhost:11434/api/generate"
-OLLAMA_MODEL        = "qwen2.5:7b"
-OLLAMA_TIMEOUT      = 30
+OLLAMA_API_URL      = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate")
+OLLAMA_MODEL        = os.getenv("LLM_MODEL", "qwen3:8b")
+OLLAMA_TIMEOUT      = int(os.getenv("OLLAMA_TIMEOUT", "30"))
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +76,7 @@ def scrape_text(url: str) -> Optional[str]:
 
     try:
         headers = {"User-Agent": "Mozilla/5.0 (compatible; EchoMate/1.0)"}
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = httpx.get(url, headers=headers, timeout=10, follow_redirects=True)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -100,7 +107,7 @@ def summarize_with_llm(word: str, text: str) -> Optional[str]:
         "要約（100文字以内）:"
     )
     try:
-        resp = requests.post(
+        resp = httpx.post(
             OLLAMA_API_URL,
             json={
                 "model":  OLLAMA_MODEL,

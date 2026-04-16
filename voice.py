@@ -11,19 +11,29 @@ VoiceInput  : faster-whisper によるオフライン日本語音声認識
 """
 
 import io
+import os
 import wave
 import logging
 import threading
-import time
 
+import httpx
 import numpy as np
-import requests
 
 try:
-    import pyaudio
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+try:
+    import pyaudiowpatch as pyaudio  # WASAPI ループバック対応版を優先
     _PYAUDIO_AVAILABLE = True
 except ImportError:
-    _PYAUDIO_AVAILABLE = False
+    try:
+        import pyaudio  # フォールバック
+        _PYAUDIO_AVAILABLE = True
+    except ImportError:
+        _PYAUDIO_AVAILABLE = False
 
 try:
     from faster_whisper import WhisperModel
@@ -37,14 +47,14 @@ logger = logging.getLogger(__name__)
 # 定数
 # ---------------------------------------------------------------------------
 
-VOICEVOX_BASE_URL    = "http://localhost:50021"
+VOICEVOX_BASE_URL    = os.getenv("VOICEVOX_BASE_URL", "http://localhost:50021")
 DEFAULT_SPEAKER_ID   = 7       # 7 = ずんだもん（キッドのデフォルト）
 REQUEST_TIMEOUT_QUERY = 5
 REQUEST_TIMEOUT_SYNTH = 10
 AUDIO_CHUNK_SIZE     = 1024
 
 # faster-whisper 設定
-WHISPER_MODEL_SIZE   = "small"   # base / small / medium（small 推奨）
+WHISPER_MODEL_SIZE   = os.getenv("WHISPER_MODEL_SIZE", "small")  # base / small / medium（small 推奨）
 WHISPER_RATE         = 16000     # Whisper 最適サンプリングレート
 WHISPER_CHUNK        = 512
 SILENCE_RMS          = 0.012     # この RMS 以下を「無音」と判定
@@ -92,7 +102,7 @@ class VoiceOutput:
 
     def _synthesize(self, text: str) -> bytes | None:
         try:
-            q = requests.post(
+            q = httpx.post(
                 f"{VOICEVOX_BASE_URL}/audio_query",
                 params={"text": text, "speaker": self.speaker_id},
                 timeout=REQUEST_TIMEOUT_QUERY,
@@ -101,7 +111,7 @@ class VoiceOutput:
                 logger.error("audio_query failed: HTTP %d", q.status_code)
                 return None
 
-            s = requests.post(
+            s = httpx.post(
                 f"{VOICEVOX_BASE_URL}/synthesis",
                 params={"speaker": self.speaker_id},
                 json=q.json(),
@@ -114,7 +124,7 @@ class VoiceOutput:
             self._voicevox_available = True
             return s.content
 
-        except requests.exceptions.ConnectionError:
+        except httpx.ConnectError:
             if self._voicevox_available is not False:
                 logger.warning("VOICEVOX not running — falling back to text output.")
             self._voicevox_available = False

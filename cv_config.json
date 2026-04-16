@@ -16,6 +16,7 @@
         "threshold": 0.4
       },
       "cooldown": 5.0,
+      "min_hits": 2,
       "enabled": true
     }
   ],

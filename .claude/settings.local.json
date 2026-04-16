@@ -4,7 +4,8 @@
       "Bash(python -c ':*)",
       "Bash(python -c \"from vision_analyzer import VisionAnalyzer; print\\('OK'\\)\")",
       "Bash(python -c \"from main import EchoMate; print\\('OK'\\)\")",
-      "Bash(ollama list *)"
+      "Bash(ollama list *)",
+      "WebSearch"
     ]
   }
 }

@@ -66,6 +66,7 @@ class DetectionZone:
     params: dict = field(default_factory=dict)
     cooldown: float = 3.0
     enabled: bool = True
+    min_hits: int = 1   # 連続 N フレーム検出してから発火（誤検知カット）
 
 
 # ---------------------------------------------------------------------------
@@ -228,15 +229,16 @@ class OpenCVDetector:
                 logger.warning("Unknown detection method: %s", zone.method)
 
             # ── 時系列フィルタ ────────────────────────────────
-            min_hits = int(zone.params.get("min_hits", 1))
-            window   = int(zone.params.get("window",   1))
+            # zone.min_hits（DataClassフィールド）を優先し、なければ params から取得
+            min_hits = zone.min_hits if zone.min_hits > 1 else int(zone.params.get("min_hits", 1))
+            window   = int(zone.params.get("window", min_hits))  # window 未指定時は min_hits と同値
 
-            if min_hits > 1 or window > 1:
+            if min_hits > 1:
                 hist = self._detection_history.setdefault(
-                    zone.name, deque(maxlen=max(window, 1))
+                    zone.name, deque(maxlen=max(window, min_hits))
                 )
                 hist.append(raw_detected)
-                confirmed = sum(list(hist)[-window:]) >= min_hits
+                confirmed = sum(list(hist)[-min_hits:]) >= min_hits
             else:
                 confirmed = raw_detected
 

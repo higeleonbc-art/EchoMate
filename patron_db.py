@@ -53,8 +53,22 @@ class PatronDB:
                     confidence REAL DEFAULT 0.5,
                     log_count INTEGER DEFAULT 0
                 );
+                CREATE TABLE IF NOT EXISTS episodes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL NOT NULL,
+                    text TEXT NOT NULL,
+                    game TEXT DEFAULT ''
+                );
+                CREATE TABLE IF NOT EXISTS growth_observations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL NOT NULL,
+                    text TEXT NOT NULL,
+                    consumed INTEGER DEFAULT 0
+                );
                 CREATE INDEX IF NOT EXISTS idx_logs_analyzed ON logs(analyzed);
                 CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_obs_consumed ON growth_observations(consumed);
             """)
         finally:
             conn.close()
@@ -173,3 +187,108 @@ class PatronDB:
         """総ログ件数を返す"""
         with self._connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
+
+    # ------------------------------------------------------------------
+    # エピソード記憶 (episodes テーブル)
+    # ------------------------------------------------------------------
+
+    def add_episode(self, text: str, game: str = "", timestamp: Optional[float] = None) -> None:
+        """印象的なエピソードを記録する（最大 MAX_EPISODES 件でローテーション）"""
+        MAX_EPISODES = 50
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT INTO episodes (timestamp, text, game) VALUES (?, ?, ?)",
+                    (timestamp or time.time(), text, game),
+                )
+                count = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+                if count > MAX_EPISODES:
+                    excess = count - MAX_EPISODES
+                    conn.execute(
+                        "DELETE FROM episodes WHERE id IN "
+                        "(SELECT id FROM episodes ORDER BY timestamp ASC LIMIT ?)",
+                        (excess,),
+                    )
+
+    def get_episodes(self, limit: int = 10) -> list[dict]:
+        """最新の limit 件のエピソードを返す"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT timestamp, text, game FROM episodes ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def migrate_episodes_from_list(self, episodes: list[dict]) -> None:
+        """user_profile.json から移行用: リストを一括インサート（既存データがない場合のみ）"""
+        with self._lock:
+            with self._connect() as conn:
+                existing = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+                if existing > 0:
+                    return
+                for ep in episodes:
+                    conn.execute(
+                        "INSERT INTO episodes (timestamp, text, game) VALUES (?, ?, ?)",
+                        (ep.get("timestamp", time.time()), ep.get("text", ""), ep.get("game", "")),
+                    )
+
+    # ------------------------------------------------------------------
+    # 成長観察メモ (growth_observations テーブル)
+    # ------------------------------------------------------------------
+
+    def add_growth_observation(self, text: str, timestamp: Optional[float] = None) -> None:
+        """成長観察メモを追加する（最大 20 件でローテーション）"""
+        MAX_OBS = 20
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT INTO growth_observations (timestamp, text) VALUES (?, ?)",
+                    (timestamp or time.time(), text),
+                )
+                count = conn.execute("SELECT COUNT(*) FROM growth_observations").fetchone()[0]
+                if count > MAX_OBS:
+                    excess = count - MAX_OBS
+                    conn.execute(
+                        "DELETE FROM growth_observations WHERE id IN "
+                        "(SELECT id FROM growth_observations ORDER BY timestamp ASC LIMIT ?)",
+                        (excess,),
+                    )
+
+    def get_growth_observations(self, limit: int = 3) -> list[dict]:
+        """最新 limit 件の成長観察（未消費）を返す"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, timestamp, text FROM growth_observations "
+                "WHERE consumed = 0 ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def pop_latest_growth_observation(self) -> Optional[str]:
+        """最新の未消費成長観察テキストを取り出し消費済みにマークする"""
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT id, text FROM growth_observations "
+                    "WHERE consumed = 0 ORDER BY timestamp DESC LIMIT 1"
+                ).fetchone()
+                if row is None:
+                    return None
+                conn.execute(
+                    "UPDATE growth_observations SET consumed = 1 WHERE id = ?",
+                    (row["id"],),
+                )
+                return row["text"]
+
+    def migrate_observations_from_list(self, observations: list[dict]) -> None:
+        """user_profile.json から移行用: リストを一括インサート（既存データがない場合のみ）"""
+        with self._lock:
+            with self._connect() as conn:
+                existing = conn.execute("SELECT COUNT(*) FROM growth_observations").fetchone()[0]
+                if existing > 0:
+                    return
+                for obs in observations:
+                    conn.execute(
+                        "INSERT INTO growth_observations (timestamp, text) VALUES (?, ?)",
+                        (obs.get("timestamp", time.time()), obs.get("text", "")),
+                    )

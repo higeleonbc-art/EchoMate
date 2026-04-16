@@ -30,6 +30,7 @@ main.py - EchoMate メインスクリプト（v3 - 良き隣人システム）
 
 import json
 import logging
+import logging.handlers
 import re
 import sys
 import threading
@@ -64,14 +65,23 @@ def _setup_logging(level: int = logging.INFO) -> None:
     echomate.log にはプレイヤーの発言・イベントが記録される。
     ファイルを他者と共有する際はプライバシーに注意すること。
     デバッグ時は --debug フラグで DEBUG レベルに切り替える。
+
+    RotatingFileHandler により echomate.log は最大 10MB × 5世代で
+    自動ローテーションされ、無限肥大化を防ぐ。
     """
     fmt = "%(asctime)s [%(levelname)-8s] %(name)s: %(message)s"
+    rotating = logging.handlers.RotatingFileHandler(
+        "echomate.log",
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=5,
+        encoding="utf-8",
+    )
     logging.basicConfig(
         level=level,
         format=fmt,
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler("echomate.log", encoding="utf-8"),
+            rotating,
         ],
     )
 
@@ -161,8 +171,9 @@ class EchoMate:
         enable_dummy: bool = False,
         enable_vision: bool = True,
         speech_callback: Optional[Callable[[str], None]] = None,
-        voice_input_device: Optional[int] = None,   # 音声認識用マイク
-        audio_detect_device: Optional[int] = None,  # ゲームイベント検知用（ループバック可）
+        voice_input_device: Optional[int] = None,    # 音声認識用マイク
+        audio_detect_device: Optional[int] = None,   # ゲームイベント検知用（ループバック可）
+        vision_monitor_index: int = 1,               # Vision 解析対象モニター（1=プライマリ）
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
 
@@ -175,7 +186,7 @@ class EchoMate:
 
         # 良き隣人システム
         self.patron_db   = PatronDB()
-        self.user_profile = UserProfile()
+        self.user_profile = UserProfile(patron_db=self.patron_db)
         self.analyzer    = PatronAnalyzer(self.patron_db, self.user_profile)
         self.observer    = ObserverModule(self.user_profile)
 
@@ -191,7 +202,7 @@ class EchoMate:
         # 検出器
         self.cv_detector    = OpenCVDetector(self.event_manager) if enable_cv    else None
         self.audio_detector = AudioDetector(self.event_manager, device_index=audio_detect_device) if enable_audio else None
-        self.vision_analyzer = VisionAnalyzer() if enable_vision else None
+        self.vision_analyzer = VisionAnalyzer(monitor_index=vision_monitor_index) if enable_vision else None
 
         # VisionAnalyzer と AudioDetector を音トリガー型で連携
         if self.audio_detector and self.vision_analyzer:
@@ -631,6 +642,11 @@ class EchoMate:
             try:
                 result = self.vision_analyzer.analyze_now(VISION_EVENT_PROMPT)
                 if not result:
+                    # VLM が完全失敗 → 話題フォールバックで沈黙を防ぐ
+                    if self.vision_analyzer.should_use_topic_fallback():
+                        fallback = self.vision_analyzer.get_fallback_topic()
+                        self.logger.info("VLM unavailable — using topic fallback: %s", fallback)
+                        self._speak_async(fallback)
                     return
                 upper = result.strip().upper()
                 if "KILL" in upper:

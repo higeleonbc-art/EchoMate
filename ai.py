@@ -19,22 +19,29 @@ ai.py - AI処理モジュール
 
 import json
 import logging
+import os
 import time
 import random
 import re
 from typing import Optional
 
-import requests
+import httpx
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# 定数
+# 定数（.env で上書き可能）
 # ---------------------------------------------------------------------------
 
-OLLAMA_MODEL      = "qwen2.5:7b"
-OLLAMA_API_URL    = "http://localhost:11434/api/generate"
-OLLAMA_TIMEOUT    = 10
+OLLAMA_MODEL      = os.environ.get("LLM_MODEL", "qwen3:8b")
+OLLAMA_API_URL    = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/generate")
+OLLAMA_TIMEOUT    = int(os.environ.get("OLLAMA_TIMEOUT", "10"))
 OLLAMA_NUM_PREDICT = 60
 
 MAX_VALIDATE_RETRY = 3   # validate_response 失敗時の最大再生成回数
@@ -87,8 +94,14 @@ class AICompanion:
         self.current_character: dict = {}
         self._user_profile: Optional[object] = None   # UserProfile（良き隣人システム）
         self._vision_context: str = ""                # 最新の画面解析結果（VisionAnalyzer）
+        self._thinking_callback: Optional[object] = None  # (is_thinking: bool) -> None
         self._load_characters()
         self.set_character(DEFAULT_CHARACTER)
+
+    def set_thinking_callback(self, callback) -> None:
+        """LLM 呼び出し開始/終了時に呼ばれるコールバックを登録する。
+        callback(is_thinking: bool) の形式。GUI インジケーター用。"""
+        self._thinking_callback = callback
 
     def set_user_profile(self, profile: object) -> None:
         """UserProfile インスタンスを設定する（良き隣人システム連携用）"""
@@ -212,8 +225,10 @@ class AICompanion:
             f"テンション: {state_snapshot.get('tension', 0.5):.2f}"
         )
         step_instruction = FOLLOWUP_STEP_PROMPTS.get(step, "一言コメントしてください。")
+        memory_ctx = self._build_memory_context(memory)
 
         prompt = (
+            f"{memory_ctx}\n\n"
             f"直前のゲームイベント: {event_type}\n"
             f"状態:\n{state_ctx}\n\n"
             "【重要】状況を説明するのではなく、状況を踏まえてプレイヤーに対し感情的にリアクションしてください。\n"
@@ -446,6 +461,11 @@ class AICompanion:
 
     def _call_ollama(self, prompt: str, system_prompt: str, max_chars: int) -> str:
         """Ollama HTTP API を呼び出す。system パラメータでキャラクターを注入。"""
+        if self._thinking_callback:
+            try:
+                self._thinking_callback(True)
+            except Exception:
+                pass
         start = time.time()
         try:
             payload: dict = {
@@ -461,7 +481,7 @@ class AICompanion:
             if system_prompt:
                 payload["system"] = system_prompt
 
-            res = requests.post(OLLAMA_API_URL, json=payload, timeout=OLLAMA_TIMEOUT)
+            res = httpx.post(OLLAMA_API_URL, json=payload, timeout=OLLAMA_TIMEOUT)
             elapsed = time.time() - start
             logger.debug("Ollama responded in %.2fs", elapsed)
 
@@ -472,15 +492,21 @@ class AICompanion:
             raw = res.json().get("response", "")
             return self._clean(raw, max_chars)
 
-        except requests.exceptions.ConnectionError:
+        except httpx.ConnectError:
             logger.error("Ollama not running at %s", OLLAMA_API_URL)
             return "（AI未接続）"
-        except requests.exceptions.Timeout:
+        except httpx.TimeoutException:
             logger.warning("Ollama timed out after %ds", OLLAMA_TIMEOUT)
             return "ちょっと待って"
         except Exception as e:
             logger.error("Ollama error: %s", e)
             return random.choice(FALLBACK_RESPONSES)
+        finally:
+            if self._thinking_callback:
+                try:
+                    self._thinking_callback(False)
+                except Exception:
+                    pass
 
     @staticmethod
     def _clean(raw: str, max_chars: int) -> str:

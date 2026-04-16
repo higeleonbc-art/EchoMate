@@ -64,7 +64,7 @@ except ImportError:
     except ImportError:
         _PYAUDIO_AVAILABLE = False
 
-import requests
+import httpx
 
 from bubble import SpeechBubble, AvatarWindow
 from main import EchoMate
@@ -83,14 +83,15 @@ VOICEVOX_URL = "http://localhost:50021/version"
 OLLAMA_URL   = "http://localhost:11434/api/tags"
 
 ZONE_DEFS = [
+    # (name, event_type, instruction, method, params, cooldown, min_hits)
     ("hp_bar_low",   "low_hp",   "HP バーを選択（左下付近）",          "color_threshold",
-     {"color": "red",  "threshold": 0.40}, 5.0),
+     {"color": "red",  "threshold": 0.40}, 5.0, 2),
     ("kill_feed",    "kill",     "キルフィードを選択（右上付近）",      "color_threshold",
-     {"color": "yellow", "threshold": 0.12}, 3.0),
+     {"color": "yellow", "threshold": 0.12}, 3.0, 2),  # 瞬間ノイズを2フレーム連続で確認
     ("death_screen", "death",    "デス暗転エリアを選択（中央部分）",    "brightness",
-     {"mode": "drop", "threshold": 40}, 8.0),
+     {"mode": "drop", "threshold": 40}, 8.0, 1),
     ("screen_flash", "big_play", "エフェクトエリアを選択（中央付近）",  "frame_diff",
-     {"threshold": 25, "changed_ratio": 0.15}, 4.0),
+     {"threshold": 25, "changed_ratio": 0.15}, 4.0, 1),
 ]
 
 ZONE_COLORS = ["#FF4444", "#FFDD00", "#AA44FF", "#44AAFF"]
@@ -305,7 +306,7 @@ class ServiceManager:
     @staticmethod
     def is_voicevox_running() -> bool:
         try:
-            r = requests.get(VOICEVOX_URL, timeout=1.5)
+            r = httpx.get(VOICEVOX_URL, timeout=1.5)
             return r.status_code == 200
         except Exception:
             return False
@@ -313,7 +314,7 @@ class ServiceManager:
     @staticmethod
     def is_ollama_running() -> bool:
         try:
-            r = requests.get(OLLAMA_URL, timeout=1.5)
+            r = httpx.get(OLLAMA_URL, timeout=1.5)
             return r.status_code == 200
         except Exception:
             return False
@@ -532,7 +533,7 @@ class ROISelectorWindow(tk.Toplevel):
             return
 
         color = ZONE_COLORS[self._zone_idx % len(ZONE_COLORS)]
-        name, event_type, _, method, params, cooldown = ZONE_DEFS[self._zone_idx]
+        name, event_type, _, method, params, cooldown, min_hits = ZONE_DEFS[self._zone_idx]
         s = self._scale
         region = {
             "left":   int(x0 / s),
@@ -560,6 +561,7 @@ class ROISelectorWindow(tk.Toplevel):
             "method":     method,
             "params":     params,
             "cooldown":   cooldown,
+            "min_hits":   min_hits,
             "enabled":    True,
         })
 
@@ -631,12 +633,59 @@ class GameSetupFrame(ttk.Frame):
                                    command=self._open_roi, state=tk.DISABLED)
         self._btn_roi.grid(row=2, column=0, columnspan=3, padx=6, pady=(2, 6))
 
+        # ── Vision モニター選択 ───────────────────────────────────────────
+        monitor_frame = ttk.LabelFrame(self, text="Vision 解析モニター")
+        monitor_frame.pack(fill=tk.X, padx=8, pady=4)
+
+        mon_row = ttk.Frame(monitor_frame)
+        mon_row.pack(fill=tk.X, padx=6, pady=6)
+        ttk.Label(mon_row, text="キャプチャ対象:").pack(side=tk.LEFT)
+        self._monitor_var = tk.StringVar()
+        self._monitor_combo = ttk.Combobox(
+            mon_row, textvariable=self._monitor_var,
+            state="readonly", width=28, font=("Meiryo", 9),
+        )
+        self._monitor_combo.pack(side=tk.LEFT, padx=6)
+        ttk.Button(mon_row, text="更新",
+                   command=self._refresh_monitors).pack(side=tk.LEFT)
+        self._refresh_monitors()
+
         # ── ステータス ────────────────────────────────────────────────────
         self._status_var = tk.StringVar(value="プロセスを選択してください")
         ttk.Label(self, textvariable=self._status_var,
                   foreground="gray").pack(anchor=tk.W, padx=10, pady=(0, 4))
 
         self._refresh_procs()
+
+    # ── モニターリスト ────────────────────────────────────────────────────────
+
+    def _refresh_monitors(self) -> None:
+        """利用可能なモニターを列挙してコンボボックスを更新する"""
+        if not _MSS:
+            self._monitor_combo["values"] = ["（mss 未インストール）"]
+            self._monitor_combo.current(0)
+            return
+        try:
+            from vision_analyzer import VisionAnalyzer
+            monitors = VisionAnalyzer.list_monitors()
+            if monitors:
+                labels = [
+                    f"モニター {m['index']}  ({m['width']}x{m['height']})"
+                    for m in monitors
+                ]
+                self._monitor_combo["values"] = labels
+                self._monitor_combo.current(0)
+            else:
+                self._monitor_combo["values"] = ["（検出なし）"]
+                self._monitor_combo.current(0)
+        except Exception as e:
+            self._monitor_combo["values"] = [f"（エラー: {e})"]
+            self._monitor_combo.current(0)
+
+    def get_monitor_index(self) -> int:
+        """選択中のモニターインデックスを返す（mss 番号: 1=プライマリ）"""
+        sel = self._monitor_combo.current()
+        return max(1, sel + 1)  # combobox は 0-origin なので +1
 
     # ── プロセスリスト ────────────────────────────────────────────────────────
 
@@ -1575,6 +1624,14 @@ class EchoMateGUI:
         ttk.Label(footer, textvariable=self._status_var,
                   font=("Meiryo", 10)).pack(side=tk.LEFT, padx=12)
 
+        # AI 思考中インジケーター（LLM 呼び出し中のみ表示）
+        self._thinking_var = tk.StringVar(value="")
+        self._thinking_label = ttk.Label(
+            footer, textvariable=self._thinking_var,
+            font=("Meiryo", 9), foreground="#2288ff",
+        )
+        self._thinking_label.pack(side=tk.RIGHT, padx=8)
+
         self.root.minsize(480, 480)
 
     # ── サービスステータス確認 ────────────────────────────────────────────────
@@ -1625,6 +1682,7 @@ class EchoMateGUI:
                 char_key      = self._char_tab.get_selected()
                 voice_device  = self._mic_tab.get_voice_input_device()
                 detect_device = self._mic_tab.get_audio_detect_device()
+                monitor_idx   = self._game_tab.get_monitor_index()
                 self._echo_mate = EchoMate(
                     character=char_key,
                     enable_cv=True,
@@ -1633,13 +1691,18 @@ class EchoMateGUI:
                     speech_callback=self._on_speech,
                     voice_input_device=voice_device,
                     audio_detect_device=detect_device,
+                    vision_monitor_index=monitor_idx,
                 )
                 self._echo_mate.start_background()
             except Exception as exc:
                 self.root.after(0, self._on_start_failed, f"EchoMate 起動エラー:\n{exc}")
                 return
 
-            # 4. 吹き出し・アバター作成
+            # 4. AI 思考中インジケーターを接続
+            if self._echo_mate:
+                self._echo_mate.ai.set_thinking_callback(self._on_ai_thinking)
+
+            # 5. 吹き出し・アバター作成
             self.root.after(0, self._create_bubble)
             self.root.after(0, self._create_avatar)
             self.root.after(0, self._on_start_success)
@@ -1671,8 +1734,14 @@ class EchoMateGUI:
 
         threading.Thread(target=_shutdown, daemon=True, name="Shutdown").start()
 
+    def _on_ai_thinking(self, is_thinking: bool) -> None:
+        """AICompanion の LLM 呼び出し開始/終了時に呼ばれる（ワーカースレッドから）"""
+        self.root.after(0, self._thinking_var.set,
+                        "AI 思考中..." if is_thinking else "")
+
     def _on_stop_done(self) -> None:
         self._running = False
+        self._thinking_var.set("")
         if self._avatar:
             self._avatar.destroy()
             self._avatar = None
