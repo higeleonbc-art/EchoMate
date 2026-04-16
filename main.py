@@ -460,8 +460,22 @@ class EchoMate:
         # 除外する相槌のリスト
         ignore_words = {"ん", "うん", "は", "あ", "え","はっ","はっは","はっはっ","はっはっは", "あー", "えー", "ふふ", "あはは", "ははは", "ふーん", "ええ", "おう", "んー", "はは", "なるほど", "そっか"}
 
-        # 実質1文字以下の文字列、または無視リストに完全一致する場合はスルー
-        if len(clean_text) <= 1 or clean_text in ignore_words:
+        def _get_repeating_unit(text: str) -> str:
+            """'ははははは' → 'は' のように最小繰り返し単位を返す"""
+            n = len(text)
+            for size in range(1, n // 2 + 1):
+                if n % size == 0 and text[:size] * (n // size) == text:
+                    return text[:size]
+            return text
+
+        def _matches_ignore(text: str) -> bool:
+            if text in ignore_words:
+                return True
+            unit = _get_repeating_unit(text)
+            return unit != text and unit in ignore_words
+
+        # 実質1文字以下の文字列、または無視リストに一致する場合はスルー
+        if len(clean_text) <= 1 or _matches_ignore(clean_text):
             self.logger.info("Ignored short/filler speech: %s", player_text)
             return
         # ────────────────────────────
