@@ -40,6 +40,11 @@ _DEFAULT_PROFILE: dict = {
         "last_updated":   0.0,
     },
     "growth_observations": [],         # 最新3件のみ保持
+    # ── 良き隣人システム拡張フィールド ──
+    "bond_level":        0.0,          # 0.0〜1.0 親密度の蓄積
+    "playstyle_labels":  [],           # ["ゴリ押し", "慎重"] など
+    "memorable_episodes": [],          # 印象的な出来事の記憶（最大10件）
+    "current_game":      "",           # 現在のゲームタイトル
 }
 
 
@@ -85,11 +90,23 @@ class UserProfile:
             self._data = _deep_copy(_DEFAULT_PROFILE)
 
     def save(self) -> None:
-        """プロファイルをJSONファイルに保存する"""
+        """プロファイルをJSONファイルに保存する。
+
+        書き込み前にディスク上の最新状態を再ロードしてマージすることで、
+        PatronAnalyzer（別スレッド）との同時書き込みによる先祖返りを防ぐ。
+        """
         with self._lock:
             try:
+                # ディスク上の最新状態を再ロードしてマージ（in_memory が優先）
+                try:
+                    with open(self.path, encoding="utf-8") as f:
+                        on_disk = json.load(f)
+                    to_write = _deep_merge(on_disk, self._data)
+                except (FileNotFoundError, json.JSONDecodeError):
+                    to_write = self._data
+
                 with open(self.path, "w", encoding="utf-8") as f:
-                    json.dump(self._data, f, ensure_ascii=False, indent=2)
+                    json.dump(to_write, f, ensure_ascii=False, indent=2)
                 logger.debug("UserProfile saved to %s", self.path)
             except OSError as e:
                 logger.error("Failed to save UserProfile: %s", e)
@@ -172,13 +189,102 @@ class UserProfile:
             stats["last_updated"]   = time.time()
 
     # ------------------------------------------------------------------
+    # 良き隣人システム拡張 setter
+    # ------------------------------------------------------------------
+
+    def add_bond(self, amount: float = 0.01) -> None:
+        """親密度を加算する（上限 1.0）"""
+        with self._lock:
+            cur = self._data.get("bond_level", 0.0)
+            self._data["bond_level"] = round(min(1.0, cur + amount), 4)
+
+    def set_current_game(self, game_name: str) -> None:
+        """現在のゲームタイトルを更新する"""
+        with self._lock:
+            self._data["current_game"] = game_name
+
+    def get_current_game(self) -> str:
+        """現在のゲームタイトルを返す"""
+        with self._lock:
+            return self._data.get("current_game", "")
+
+    def get_bond_level(self) -> float:
+        """親密度を返す"""
+        with self._lock:
+            return float(self._data.get("bond_level", 0.0))
+
+    def add_playstyle_label(self, label: str) -> None:
+        """プレイスタイルラベルを追加する（重複なし・最大5件）"""
+        with self._lock:
+            labels = self._data.setdefault("playstyle_labels", [])
+            if label and label not in labels:
+                labels.append(label)
+                if len(labels) > 5:
+                    labels.pop(0)
+
+    def set_playstyle_labels(self, labels: list[str]) -> None:
+        """プレイスタイルラベルを一括置換する（最大5件）"""
+        with self._lock:
+            self._data["playstyle_labels"] = [l for l in labels if isinstance(l, str)][:5]
+
+    def add_memorable_episode(self, text: str, game: str = "") -> None:
+        """印象的な出来事を記録する（最大10件）"""
+        with self._lock:
+            episodes = self._data.setdefault("memorable_episodes", [])
+            episodes.append({
+                "text":      text,
+                "game":      game or self._data.get("current_game", ""),
+                "timestamp": time.time(),
+            })
+            if len(episodes) > 10:
+                episodes.pop(0)
+
+    def get_memorable_episodes(self) -> list[dict]:
+        """memorable_episodes のコピーを返す"""
+        with self._lock:
+            return list(self._data.get("memorable_episodes", []))
+
+    # ------------------------------------------------------------------
     # プロンプト用サマリー
     # ------------------------------------------------------------------
+
+    def get_growth_summary_for_prompt(self) -> str:
+        """
+        過去セッションとの成長比較サマリーをRAGプロンプト用に返す。
+        「前よりエイム良くなってるね！」「今日はデス多めだけど大丈夫？」
+        といった発言を引き出すためのコンテキストとして使用する。
+        """
+        with self._lock:
+            obs = self._data.get("growth_observations", [])
+            stats = self._data.get("session_stats", {})
+            personality = self._data.get("personality", {})
+
+            parts = []
+
+            sessions = stats.get("total_sessions", 0)
+            if sessions >= 2:
+                parts.append(f"{sessions}セッション目")
+
+            # 成長観察メモ（最新2件）
+            for o in obs[-2:]:
+                text = o.get("text", "")
+                if text:
+                    parts.append(text)
+
+            # ストレス耐性が低い場合は苦手パターンとして言及
+            stress = personality.get("stress_tolerance", 0.5)
+            if stress < 0.35:
+                parts.append("デス後にストレスがかかりやすい")
+
+            if not parts:
+                return ""
+
+            return "【成長観察】" + " / ".join(parts)
 
     def get_summary_for_prompt(self) -> str:
         """
         RAGプロンプトに埋め込む簡潔なプロファイルサマリーを返す。
-        LLMへのトークン消費を抑えるため50文字以内に収める。
+        bond_level・playstyle_labels・memorable_episodes も含める。
         """
         with self._lock:
             p   = self._data.get("preferences", {})
@@ -198,7 +304,7 @@ class UserProfile:
             aggr_label    = "高" if aggr   > 0.6 else ("低" if aggr   < 0.4 else "中")
             slang_label   = "多" if slang  > 0.6 else ("少" if slang  < 0.4 else "普通")
 
-            return (
+            base = (
                 f"【ユーザー特性】"
                 f"応答希望:{length}/{tone}  "
                 f"嫌い:{dislikes}  "
@@ -206,3 +312,15 @@ class UserProfile:
                 f"攻撃性:{aggr_label}  "
                 f"スラング:{slang_label}"
             )
+
+            # 親密度
+            bond = float(self._data.get("bond_level", 0.0))
+            bond_label = "高い" if bond >= 0.7 else ("中程度" if bond >= 0.4 else "低い")
+            base += f"  親密度:{bond:.2f}({bond_label})"
+
+            # プレイスタイル
+            labels = self._data.get("playstyle_labels", [])
+            if labels:
+                base += f"  プレイスタイル:{'・'.join(labels[:3])}"
+
+            return base

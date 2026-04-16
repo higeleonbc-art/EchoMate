@@ -50,9 +50,23 @@ try:
 except ImportError:
     _PIL = False
 
+try:
+    import pyaudiowpatch as _pyaudio  # WASAPI ループバック対応版を優先
+    import numpy as _np
+    _PYAUDIO_AVAILABLE = True
+    _WPATCH_AVAILABLE  = True
+except ImportError:
+    _WPATCH_AVAILABLE = False
+    try:
+        import pyaudio as _pyaudio
+        import numpy as _np
+        _PYAUDIO_AVAILABLE = True
+    except ImportError:
+        _PYAUDIO_AVAILABLE = False
+
 import requests
 
-from bubble import SpeechBubble
+from bubble import SpeechBubble, AvatarWindow
 from main import EchoMate
 import main as _main_module
 
@@ -82,6 +96,127 @@ ZONE_DEFS = [
 ZONE_COLORS = ["#FF4444", "#FFDD00", "#AA44FF", "#44AAFF"]
 
 logger = logging.getLogger(__name__)
+
+
+# ── オーディオデバイス列挙 ────────────────────────────────────────────────────
+
+def list_audio_input_devices() -> list[tuple[int, str]]:
+    """通常の入力チャンネルを持つオーディオデバイスの (index, name) リストを返す"""
+    if not _PYAUDIO_AVAILABLE:
+        return []
+    try:
+        p = _pyaudio.PyAudio()
+        devices: list[tuple[int, str]] = []
+        for i in range(p.get_device_count()):
+            info = p.get_device_info_by_index(i)
+            # ループバックデバイスは除外（別関数で列挙）
+            if info.get("maxInputChannels", 0) > 0 and not info.get("isLoopbackDevice", False):
+                devices.append((i, info.get("name", f"Device {i}")))
+        p.terminate()
+        return devices
+    except Exception:
+        return []
+
+
+def list_loopback_devices() -> list[tuple[int, str]]:
+    """
+    WASAPIループバックデバイスの (index, name) リストを返す。
+    pyaudiowpatch が必要。未インストールの場合は空リストを返す。
+    """
+    if not _PYAUDIO_AVAILABLE or not _WPATCH_AVAILABLE:
+        return []
+    try:
+        p = _pyaudio.PyAudio()
+        devices: list[tuple[int, str]] = []
+        for i in range(p.get_device_count()):
+            info = p.get_device_info_by_index(i)
+            if info.get("isLoopbackDevice", False):
+                devices.append((i, info.get("name", f"Loopback {i}")))
+        p.terminate()
+        return devices
+    except Exception:
+        return []
+
+
+# ── マイク常時モニター ────────────────────────────────────────────────────────
+
+class MicMonitor:
+    """
+    選択されたデバイスからマイク入力レベルを常時監視する軽量クラス。
+    GUIのレベルインジケーターに current_rms を公開する。
+    """
+
+    _CHUNK        = 512
+    _FALLBACK_RATE = 44100
+
+    def __init__(self) -> None:
+        self.current_rms: float = 0.0
+        self.device_index: int | None = None
+        self._gen = 0   # スレッド世代番号（デバイス変更時にインクリメント）
+
+    def start(self) -> None:
+        """現在の device_index でモニタリングを開始する"""
+        if not _PYAUDIO_AVAILABLE:
+            return
+        self._gen += 1
+        t = threading.Thread(
+            target=self._loop,
+            args=(self._gen,),
+            daemon=True,
+            name="MicMonitor",
+        )
+        t.start()
+
+    def set_device(self, device_index: int | None) -> None:
+        """デバイスを切り替えてモニタリングを再起動する"""
+        self.device_index = device_index
+        self.current_rms = 0.0
+        self.start()
+
+    def stop(self) -> None:
+        """モニタリングを停止する（世代番号を変えてスレッドを終了させる）"""
+        self._gen += 1
+        self.current_rms = 0.0
+
+    def _loop(self, gen: int) -> None:
+        p = _pyaudio.PyAudio()
+        stream = None
+        try:
+            # デバイスのネイティブサンプルレートを使用（ループバック互換性のため）
+            rate = self._FALLBACK_RATE
+            if self.device_index is not None:
+                try:
+                    info = p.get_device_info_by_index(self.device_index)
+                    rate = int(info.get("defaultSampleRate", self._FALLBACK_RATE))
+                except Exception:
+                    pass
+
+            stream = p.open(
+                format=_pyaudio.paFloat32,
+                channels=1,
+                rate=rate,
+                input=True,
+                frames_per_buffer=self._CHUNK,
+                input_device_index=self.device_index,
+            )
+            while self._gen == gen:
+                try:
+                    raw = stream.read(self._CHUNK, exception_on_overflow=False)
+                    samples = _np.frombuffer(raw, dtype=_np.float32)
+                    self.current_rms = float(_np.sqrt(_np.mean(samples ** 2)))
+                except OSError:
+                    time.sleep(0.05)
+        except Exception as e:
+            logger.debug("MicMonitor error: %s", e)
+        finally:
+            self.current_rms = 0.0
+            if stream:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception:
+                    pass
+            p.terminate()
 
 
 # ── プロセス列挙 ──────────────────────────────────────────────────────────────
@@ -636,6 +771,211 @@ class GameSetupFrame(ttk.Frame):
                             "EchoMate を（再）起動すると有効になります。")
 
 
+# ── マイク設定タブ ────────────────────────────────────────────────────────────
+
+class MicSetupFrame(ttk.Frame):
+    """
+    マイク設定タブ。
+
+    用途別にデバイスを分けて管理する:
+      - 音声認識デバイス (VoiceInput)  : 常にマイク入力 → レベルバーで確認
+      - ゲームイベント検知デバイス (AudioDetector) : マイクまたはWASAPIループバック
+    """
+
+    _RMS_SCALE = 800  # RMS → プログレスバー変換係数
+
+    def __init__(self, master: tk.Misc, mic_monitor: MicMonitor) -> None:
+        super().__init__(master)
+        self._monitor = mic_monitor          # 音声認識デバイスのレベル監視
+        self._mic_devices:  list[tuple[int, str]] = []  # マイク入力デバイス
+        self._detect_devices: list[tuple[int, str]] = []  # 検知デバイス
+        self._build()
+        self._poll_level()
+
+    def _build(self) -> None:
+        # ════════════════════════════════════════════════════════════════
+        # 1. 音声認識デバイス（VoiceInput 専用・常にマイク）
+        # ════════════════════════════════════════════════════════════════
+        mic_frame = ttk.LabelFrame(self, text="音声認識デバイス（マイク）")
+        mic_frame.pack(fill=tk.X, padx=8, pady=(10, 4))
+
+        mic_row = ttk.Frame(mic_frame)
+        mic_row.pack(fill=tk.X, padx=6, pady=(6, 2))
+        self._mic_var   = tk.StringVar()
+        self._mic_combo = ttk.Combobox(
+            mic_row, textvariable=self._mic_var,
+            state="readonly", width=44, font=("Meiryo", 9),
+        )
+        self._mic_combo.pack(side=tk.LEFT)
+        ttk.Button(mic_row, text="更新",
+                   command=self._refresh_mic_devices).pack(side=tk.LEFT, padx=4)
+
+        # レベルバー（音声認識デバイスのレベルを表示）
+        self._canvas = tk.Canvas(mic_frame, height=22, bg="#1e1e1e",
+                                  highlightthickness=0)
+        self._canvas.pack(fill=tk.X, padx=6, pady=(4, 2))
+        self._bar_id  = self._canvas.create_rectangle(0, 0, 0, 22, fill="#44dd44", outline="")
+        self._peak_id = self._canvas.create_rectangle(0, 0, 0, 22, fill="#ffffff", outline="")
+        self._peak_rms:   float = 0.0
+        self._peak_decay: int   = 0
+
+        mic_info = ttk.Frame(mic_frame)
+        mic_info.pack(fill=tk.X, padx=6, pady=(0, 6))
+        self._rms_var = tk.StringVar(value="RMS: 0.0000")
+        ttk.Label(mic_info, textvariable=self._rms_var,
+                  font=("Consolas", 8), foreground="gray").pack(side=tk.LEFT)
+        self._mic_status_var = tk.StringVar(value="")
+        ttk.Label(mic_info, textvariable=self._mic_status_var,
+                  font=("Meiryo", 8), foreground="gray").pack(side=tk.RIGHT)
+
+        # ════════════════════════════════════════════════════════════════
+        # 2. ゲームイベント検知デバイス（AudioDetector 専用）
+        # ════════════════════════════════════════════════════════════════
+        detect_frame = ttk.LabelFrame(self, text="ゲームイベント検知デバイス（AudioDetector）")
+        detect_frame.pack(fill=tk.X, padx=8, pady=4)
+
+        # モード選択
+        self._mode_var = tk.StringVar(value="mic")
+        ttk.Radiobutton(
+            detect_frame, text="音声認識と同じマイクを使用",
+            variable=self._mode_var, value="mic",
+            command=self._on_detect_mode_change,
+        ).pack(anchor=tk.W, padx=8, pady=(6, 2))
+
+        lb_row = ttk.Frame(detect_frame)
+        lb_row.pack(fill=tk.X, padx=8, pady=(2, 4))
+        ttk.Radiobutton(
+            lb_row, text="ゲーム音をキャプチャ（WASAPIループバック）",
+            variable=self._mode_var, value="loopback",
+            command=self._on_detect_mode_change,
+        ).pack(side=tk.LEFT)
+        if not _WPATCH_AVAILABLE:
+            ttk.Label(
+                lb_row, text="※ pip install pyaudiowpatch が必要",
+                foreground="#cc6600", font=("Meiryo", 8),
+            ).pack(side=tk.LEFT, padx=6)
+
+        # ループバックデバイス選択（ループバックモード時のみ有効）
+        self._detect_row = ttk.Frame(detect_frame)
+        self._detect_row.pack(fill=tk.X, padx=8, pady=(0, 6))
+        self._detect_var   = tk.StringVar()
+        self._detect_combo = ttk.Combobox(
+            self._detect_row, textvariable=self._detect_var,
+            state="readonly", width=44, font=("Meiryo", 9),
+        )
+        self._detect_combo.pack(side=tk.LEFT)
+        ttk.Button(self._detect_row, text="更新",
+                   command=self._refresh_detect_devices).pack(side=tk.LEFT, padx=4)
+        self._detect_status_var = tk.StringVar(value="")
+        ttk.Label(self._detect_row, textvariable=self._detect_status_var,
+                  font=("Meiryo", 8), foreground="gray").pack(side=tk.LEFT, padx=6)
+
+        if not _PYAUDIO_AVAILABLE:
+            self._mic_status_var.set("pyaudio が未インストールです")
+
+        # 初期構築
+        self._refresh_mic_devices()
+        self._on_detect_mode_change()
+
+    # ── モード切替 ────────────────────────────────────────────────────────────
+
+    def _on_detect_mode_change(self) -> None:
+        is_loopback = self._mode_var.get() == "loopback"
+        state = tk.NORMAL if is_loopback else tk.DISABLED
+        for child in self._detect_row.winfo_children():
+            try:
+                child.configure(state=state)
+            except Exception:
+                pass
+        if is_loopback:
+            self._refresh_detect_devices()
+        else:
+            self._detect_status_var.set("（音声認識デバイスと同一）")
+
+    # ── デバイスリスト更新 ────────────────────────────────────────────────────
+
+    def _refresh_mic_devices(self) -> None:
+        self._mic_devices = list_audio_input_devices()
+        if self._mic_devices:
+            self._mic_combo["values"] = [f"[{i}] {n}" for i, n in self._mic_devices]
+            self._mic_combo.current(0)
+            self._mic_combo.bind("<<ComboboxSelected>>", self._on_mic_select)
+            self._on_mic_select()
+            self._mic_status_var.set(f"{len(self._mic_devices)} デバイス検出")
+        else:
+            self._mic_combo["values"] = ["（入力デバイスが見つかりません）"]
+            self._mic_combo.current(0)
+            self._mic_status_var.set("デバイスなし")
+
+    def _refresh_detect_devices(self) -> None:
+        self._detect_devices = list_loopback_devices()
+        if self._detect_devices:
+            self._detect_combo["values"] = [f"[{i}] {n}" for i, n in self._detect_devices]
+            self._detect_combo.current(0)
+            self._detect_status_var.set(f"{len(self._detect_devices)} デバイス検出")
+        else:
+            self._detect_combo["values"] = ["（ループバックデバイスなし）"]
+            self._detect_combo.current(0)
+            self._detect_status_var.set("デバイスなし")
+
+    def _on_mic_select(self, _event=None) -> None:
+        sel = self._mic_combo.current()
+        if 0 <= sel < len(self._mic_devices):
+            dev_idx, _ = self._mic_devices[sel]
+            self._monitor.set_device(dev_idx)
+
+    # ── レベルポーリング ──────────────────────────────────────────────────────
+
+    def _poll_level(self) -> None:
+        rms = self._monitor.current_rms
+        self._rms_var.set(f"RMS: {rms:.4f}")
+
+        if rms > self._peak_rms:
+            self._peak_rms   = rms
+            self._peak_decay = 0
+        else:
+            self._peak_decay += 1
+            if self._peak_decay > 30:
+                self._peak_rms = max(0.0, self._peak_rms - 0.001)
+
+        try:
+            w = self._canvas.winfo_width()
+            if w < 2:
+                w = 400
+            scaled      = min(rms * self._RMS_SCALE, 100) / 100
+            peak_scaled = min(self._peak_rms * self._RMS_SCALE, 100) / 100
+            bar_x  = int(w * scaled)
+            peak_x = int(w * peak_scaled)
+            color  = "#44dd44" if scaled < 0.5 else ("#ffaa00" if scaled < 0.8 else "#ff4444")
+            self._canvas.coords(self._bar_id,  0, 0, bar_x, 22)
+            self._canvas.itemconfig(self._bar_id, fill=color)
+            self._canvas.coords(self._peak_id, peak_x - 2, 0, peak_x + 2, 22)
+        except Exception:
+            pass
+
+        self.after(80, self._poll_level)
+
+    # ── デバイス取得（EchoMate 起動時に呼ばれる） ────────────────────────────
+
+    def get_voice_input_device(self) -> int | None:
+        """VoiceInput（音声認識）用デバイスインデックスを返す"""
+        sel = self._mic_combo.current()
+        if 0 <= sel < len(self._mic_devices):
+            return self._mic_devices[sel][0]
+        return None
+
+    def get_audio_detect_device(self) -> int | None:
+        """AudioDetector（ゲームイベント検知）用デバイスインデックスを返す。
+        マイクモードなら VoiceInput と同じデバイス、ループバックモードなら選択中のループバックデバイス。"""
+        if self._mode_var.get() == "loopback":
+            sel = self._detect_combo.current()
+            if 0 <= sel < len(self._detect_devices):
+                return self._detect_devices[sel][0]
+            return None
+        # "mic" モード: 音声認識デバイスと同じ
+        return self.get_voice_input_device()
+
+
 # ── 相棒設定タブ ──────────────────────────────────────────────────────────────
 
 class CharacterFrame(ttk.Frame):
@@ -720,35 +1060,59 @@ class CharacterFrame(ttk.Frame):
 # ── 吹き出し設定タブ ──────────────────────────────────────────────────────────
 
 class BubbleFrame(ttk.Frame):
-    """吹き出し UI の表示制御タブ"""
+    """吹き出し UI・アバター立ち絵の表示制御タブ"""
 
-    def __init__(self, master: tk.Misc, get_bubble) -> None:
+    def __init__(self, master: tk.Misc, get_bubble, get_avatar=None) -> None:
         super().__init__(master)
-        self._get_bubble = get_bubble  # callable -> Optional[SpeechBubble]
+        self._get_bubble = get_bubble   # callable -> Optional[SpeechBubble]
+        self._get_avatar = get_avatar   # callable -> Optional[AvatarWindow]
         self._build()
 
     def _build(self) -> None:
-        ttk.Label(self, text="相棒の吹き出し UI", font=("Meiryo", 11)).pack(pady=(12, 6))
+        ttk.Label(self, text="オーバーレイ UI", font=("Meiryo", 11)).pack(pady=(12, 6))
 
         info = (
-            "グリーンバック背景の吹き出しウィンドウです。\n"
+            "グリーンバック背景のウィンドウです。\n"
             "OBS の「ウィンドウキャプチャ」＋クロマキーフィルターで\n"
             "ゲーム映像に透過合成できます。"
         )
         ttk.Label(self, text=info, justify=tk.LEFT,
                   foreground="gray").pack(padx=12, anchor=tk.W)
 
-        ctrl = ttk.Frame(self)
-        ctrl.pack(pady=12)
-        ttk.Button(ctrl, text="吹き出しを表示", command=self._show_bubble).pack(side=tk.LEFT, padx=6)
-        ttk.Button(ctrl, text="吹き出しを隠す",  command=self._hide_bubble).pack(side=tk.LEFT, padx=6)
+        # ── 吹き出し制御 ─────────────────────────────────────────────
+        bubble_frame = ttk.LabelFrame(self, text="吹き出し")
+        bubble_frame.pack(fill=tk.X, padx=12, pady=(8, 4))
+
+        ctrl = ttk.Frame(bubble_frame)
+        ctrl.pack(pady=6)
+        ttk.Button(ctrl, text="表示", command=self._show_bubble).pack(side=tk.LEFT, padx=6)
+        ttk.Button(ctrl, text="隠す",  command=self._hide_bubble).pack(side=tk.LEFT, padx=6)
 
         # テスト送信
-        test_frame = ttk.LabelFrame(self, text="テストメッセージ")
-        test_frame.pack(fill=tk.X, padx=12, pady=4)
+        test_row = ttk.Frame(bubble_frame)
+        test_row.pack(fill=tk.X, padx=6, pady=(0, 6))
+        ttk.Label(test_row, text="テスト:").pack(side=tk.LEFT)
         self._test_var = tk.StringVar(value="やったじゃん！")
-        ttk.Entry(test_frame, textvariable=self._test_var, width=30).pack(side=tk.LEFT, padx=6, pady=6)
-        ttk.Button(test_frame, text="送信", command=self._send_test).pack(side=tk.LEFT, padx=4)
+        ttk.Entry(test_row, textvariable=self._test_var, width=24).pack(side=tk.LEFT, padx=4)
+        ttk.Button(test_row, text="送信", command=self._send_test).pack(side=tk.LEFT)
+
+        # ── アバター立ち絵制御 ────────────────────────────────────────
+        avatar_frame = ttk.LabelFrame(self, text="アバター立ち絵")
+        avatar_frame.pack(fill=tk.X, padx=12, pady=4)
+
+        avatar_ctrl = ttk.Frame(avatar_frame)
+        avatar_ctrl.pack(pady=6)
+        ttk.Button(avatar_ctrl, text="表示", command=self._show_avatar).pack(side=tk.LEFT, padx=6)
+        ttk.Button(avatar_ctrl, text="隠す",  command=self._hide_avatar).pack(side=tk.LEFT, padx=6)
+
+        sprite_info = (
+            "assets/sprites/ に画像を配置すると立ち絵が表示されます。\n"
+            "ファイル名: base_idle_close.png, eyes_open.png 等"
+        )
+        ttk.Label(avatar_frame, text=sprite_info, justify=tk.LEFT,
+                  foreground="gray", font=("Meiryo", 8)).pack(padx=8, pady=(0, 6), anchor=tk.W)
+
+    # ── 吹き出し ──────────────────────────────────────────────────────────────
 
     def _show_bubble(self) -> None:
         bubble = self._get_bubble()
@@ -766,6 +1130,364 @@ class BubbleFrame(ttk.Frame):
             bubble.update_text(self._test_var.get())
             bubble.show()
 
+    # ── アバター ──────────────────────────────────────────────────────────────
+
+    def _show_avatar(self) -> None:
+        avatar = self._get_avatar() if self._get_avatar else None
+        if avatar:
+            avatar.show()
+
+    def _hide_avatar(self) -> None:
+        avatar = self._get_avatar() if self._get_avatar else None
+        if avatar:
+            avatar.hide()
+
+
+# ── 学習ノートタブ ────────────────────────────────────────────────────────────
+
+class LearningFrame(ttk.Frame):
+    """相棒の学習ノート（気になること）タブ（Task6b）"""
+
+    def __init__(self, master: tk.Misc) -> None:
+        super().__init__(master)
+        self._build()
+
+    def _build(self) -> None:
+        ttk.Label(self, text="相棒の学習ノート（気になること）",
+                  font=("Meiryo", 11)).pack(pady=(10, 4))
+
+        # ── 気になることリスト ──────────────────────────────────────────────
+        list_frame = ttk.LabelFrame(self, text="相棒が知りたがっていること")
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(4, 4))
+
+        scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
+        self._word_list = tk.Listbox(
+            list_frame, yscrollcommand=scroll.set, height=7,
+            selectmode=tk.SINGLE, font=("Meiryo", 10), exportselection=False,
+        )
+        scroll.config(command=self._word_list.yview)
+        self._word_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0), pady=4)
+        scroll.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 4), pady=4)
+
+        btn_row = ttk.Frame(list_frame)
+        btn_row.pack(fill=tk.X, padx=4, pady=(0, 4))
+        ttk.Button(btn_row, text="一覧を更新", command=self._refresh).pack(side=tk.LEFT)
+
+        # ── URL入力と学習ボタン ─────────────────────────────────────────────
+        learn_frame = ttk.LabelFrame(self, text="URLから学習させる")
+        learn_frame.pack(fill=tk.X, padx=8, pady=4)
+
+        ttk.Label(learn_frame, text="URL:").grid(row=0, column=0, padx=6, pady=6, sticky=tk.W)
+        self._url_var = tk.StringVar()
+        ttk.Entry(learn_frame, textvariable=self._url_var,
+                  width=38).grid(row=0, column=1, padx=4, pady=6, sticky=tk.EW)
+        ttk.Button(learn_frame, text="学習させる",
+                   command=self._learn).grid(row=0, column=2, padx=6, pady=6)
+        learn_frame.columnconfigure(1, weight=1)
+
+        # ステータス
+        self._status_var = tk.StringVar(value="単語を選択してURLを入力してください")
+        ttk.Label(self, textvariable=self._status_var,
+                  foreground="gray").pack(anchor=tk.W, padx=10, pady=(0, 4))
+
+        # ── 学習済み知識 ────────────────────────────────────────────────────
+        knowledge_frame = ttk.LabelFrame(self, text="学習済みのゲーム知識")
+        knowledge_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+
+        scroll2 = ttk.Scrollbar(knowledge_frame, orient=tk.VERTICAL)
+        self._knowledge_list = tk.Listbox(
+            knowledge_frame, yscrollcommand=scroll2.set, height=5,
+            font=("Meiryo", 9), exportselection=False,
+        )
+        scroll2.config(command=self._knowledge_list.yview)
+        self._knowledge_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True,
+                                   padx=(4, 0), pady=4)
+        scroll2.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 4), pady=4)
+
+        self._refresh()
+
+    def _refresh(self) -> None:
+        try:
+            from web_learner import load_curiosity_list, load_game_knowledge
+            self._word_list.delete(0, tk.END)
+            for item in load_curiosity_list():
+                self._word_list.insert(tk.END, item.get("word", ""))
+            self._knowledge_list.delete(0, tk.END)
+            for word, desc in load_game_knowledge().items():
+                display = f"{word}: {desc[:45]}..." if len(desc) > 45 else f"{word}: {desc}"
+                self._knowledge_list.insert(tk.END, display)
+        except Exception as e:
+            self._status_var.set(f"読み込みエラー: {e}")
+
+    def _learn(self) -> None:
+        sel = self._word_list.curselection()
+        if not sel:
+            self._status_var.set("単語をリストから選択してください")
+            return
+        word = self._word_list.get(sel[0])
+        url = self._url_var.get().strip()
+        if not url:
+            self._status_var.set("URLを入力してください")
+            return
+
+        self._status_var.set(f"「{word}」を学習中... しばらくお待ちください")
+
+        def _do_learn() -> None:
+            try:
+                from web_learner import learn_from_url
+                success, message = learn_from_url(word, url)
+                display = message[:50] + "..." if len(message) > 50 else message
+                if success:
+                    self.after(0, lambda: self._status_var.set(f"学習完了: {display}"))
+                else:
+                    self.after(0, lambda: self._status_var.set(f"学習失敗: {display}"))
+                self.after(0, self._refresh)
+            except Exception as e:
+                self.after(0, lambda: self._status_var.set(f"エラー: {e}"))
+
+        threading.Thread(target=_do_learn, daemon=True, name="WebLearner").start()
+
+
+# ── プロファイルタブ ──────────────────────────────────────────────────────────
+
+class ProfileFrame(ttk.Frame):
+    """相棒との仲（bond_level・プレイスタイル・記憶）を表示するタブ"""
+
+    POLL_MS = 5000  # 自動更新間隔 (ms)
+
+    def __init__(self, master: tk.Misc, get_echo_mate) -> None:
+        super().__init__(master)
+        self._get_echo_mate = get_echo_mate
+        self._build()
+        self._poll()
+
+    def _build(self) -> None:
+        ttk.Label(self, text="相棒との仲", font=("Meiryo", 11)).pack(pady=(10, 4))
+
+        # ── 親密度 ────────────────────────────────────────────────────────
+        bond_frame = ttk.LabelFrame(self, text="親密度 (Bond Level)")
+        bond_frame.pack(fill=tk.X, padx=12, pady=(4, 4))
+
+        self._bond_var = tk.StringVar(value="0.00")
+        ttk.Label(bond_frame, textvariable=self._bond_var,
+                  font=("Meiryo", 10, "bold")).pack(anchor=tk.W, padx=8, pady=(4, 0))
+        self._bond_bar = ttk.Progressbar(
+            bond_frame, orient=tk.HORIZONTAL, maximum=1.0, mode="determinate"
+        )
+        self._bond_bar.pack(fill=tk.X, padx=8, pady=(2, 8))
+
+        # ── プレイスタイルタグ ─────────────────────────────────────────────
+        style_frame = ttk.LabelFrame(self, text="プレイスタイル")
+        style_frame.pack(fill=tk.X, padx=12, pady=4)
+        self._style_inner = ttk.Frame(style_frame)
+        self._style_inner.pack(fill=tk.X, padx=8, pady=6)
+        ttk.Label(self._style_inner, text="（まだ分析されていません）",
+                  foreground="gray").pack(side=tk.LEFT)
+
+        # ── 記憶に残る出来事 ───────────────────────────────────────────────
+        ep_frame = ttk.LabelFrame(self, text="記憶に残る出来事")
+        ep_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
+
+        scroll = ttk.Scrollbar(ep_frame, orient=tk.VERTICAL)
+        self._ep_list = tk.Listbox(
+            ep_frame, yscrollcommand=scroll.set, height=6,
+            font=("Meiryo", 9), exportselection=False,
+        )
+        scroll.config(command=self._ep_list.yview)
+        self._ep_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0), pady=4)
+        scroll.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 4), pady=4)
+
+        ttk.Button(self, text="更新", command=self._refresh).pack(pady=(0, 8))
+
+    def _poll(self) -> None:
+        self._refresh()
+        self.after(self.POLL_MS, self._poll)
+
+    def _refresh(self) -> None:
+        em = self._get_echo_mate()
+        if em is None or not hasattr(em, "user_profile"):
+            return
+        try:
+            profile = em.user_profile
+            bond = profile.get_bond_level()
+            self._bond_var.set(f"{bond:.2f}")
+            self._bond_bar["value"] = bond
+
+            # プレイスタイルタグを再描画
+            for w in self._style_inner.winfo_children():
+                w.destroy()
+            labels = profile.get().get("playstyle_labels", [])
+            if labels:
+                for lbl in labels:
+                    tk.Label(
+                        self._style_inner, text=f"  {lbl}  ",
+                        bg="#445577", fg="white",
+                        font=("Meiryo", 9, "bold"),
+                        relief=tk.FLAT, padx=4, pady=2,
+                    ).pack(side=tk.LEFT, padx=3)
+            else:
+                ttk.Label(self._style_inner, text="（まだ分析されていません）",
+                          foreground="gray").pack(side=tk.LEFT)
+
+            # エピソード一覧（新しい順）
+            self._ep_list.delete(0, tk.END)
+            for ep in reversed(profile.get_memorable_episodes()):
+                game = ep.get("game", "")
+                text = ep.get("text", "")
+                entry = f"[{game}] {text}" if game else text
+                self._ep_list.insert(tk.END, entry)
+        except Exception:
+            pass
+
+
+# ── メンタルグラフタブ ────────────────────────────────────────────────────────
+
+class MentalGraphFrame(ttk.Frame):
+    """
+    テンション（興奮度）の推移をリアルタイムで折れ線グラフ表示するタブ。
+
+    StateManager.get_state().tension を定期的にポーリングし、
+    直近 HISTORY_MAX ポイントを Canvas に描画する。
+    """
+
+    HISTORY_MAX = 60    # 保持する最大データポイント数
+    POLL_MS     = 3000  # ポーリング間隔 (ms)
+
+    _PAD_L = 36         # 左余白（Y軸ラベル用）
+    _PAD_R = 8
+    _PAD_T = 10
+    _PAD_B = 22         # 下余白（X軸）
+
+    def __init__(self, master: tk.Misc, get_echo_mate) -> None:
+        super().__init__(master)
+        self._get_echo_mate = get_echo_mate
+        self._history: list[float] = []
+        self._build()
+        self._poll()
+
+    def _build(self) -> None:
+        ttk.Label(
+            self, text="テンション（興奮度）推移",
+            font=("Meiryo", 11),
+        ).pack(pady=(10, 4))
+
+        self._canvas = tk.Canvas(
+            self, bg="#1a1a2e", height=180,
+            highlightthickness=1, highlightbackground="#333355",
+        )
+        self._canvas.pack(fill=tk.X, padx=8, pady=4)
+        self._canvas.bind("<Configure>", lambda _: self._draw())
+
+        # 数値表示行
+        info = ttk.Frame(self)
+        info.pack(fill=tk.X, padx=8)
+        self._tension_var = tk.StringVar(value="テンション: -- （停止中）")
+        ttk.Label(info, textvariable=self._tension_var,
+                  font=("Meiryo", 10, "bold")).pack(side=tk.LEFT)
+        self._status_var = tk.StringVar(value="")
+        ttk.Label(info, textvariable=self._status_var,
+                  font=("Meiryo", 8), foreground="gray").pack(side=tk.RIGHT)
+
+        # 凡例
+        legend = ttk.Frame(self)
+        legend.pack(fill=tk.X, padx=8, pady=(2, 4))
+        for color, label in [
+            ("#ff4444", "高 (≥0.6)"),
+            ("#ffaa00", "中 (0.3〜0.6)"),
+            ("#44aaff", "低 (<0.3)"),
+        ]:
+            f = ttk.Frame(legend)
+            f.pack(side=tk.LEFT, padx=6)
+            tk.Canvas(f, bg=color, width=12, height=12,
+                      highlightthickness=0).pack(side=tk.LEFT)
+            ttk.Label(f, text=label, font=("Meiryo", 8),
+                      foreground="gray").pack(side=tk.LEFT, padx=2)
+
+    def _poll(self) -> None:
+        em = self._get_echo_mate()
+        if em is not None and hasattr(em, "state_manager"):
+            try:
+                tension = em.state_manager.get_state().tension
+                self._history.append(tension)
+                if len(self._history) > self.HISTORY_MAX:
+                    del self._history[0]
+                label = (
+                    "非常に高い" if tension >= 0.8 else
+                    "高い"       if tension >= 0.6 else
+                    "普通"        if tension >= 0.3 else
+                    "低い"
+                )
+                self._tension_var.set(f"テンション: {tension:.2f}  ({label})")
+                self._status_var.set(f"{len(self._history)} pt")
+                self._draw()
+            except Exception:
+                pass
+        else:
+            self._tension_var.set("テンション: -- （停止中）")
+            self._status_var.set("")
+
+        self.after(self.POLL_MS, self._poll)
+
+    def _draw(self) -> None:
+        c = self._canvas
+        c.delete("all")
+        w = c.winfo_width()
+        h = c.winfo_height()
+        if w <= 1 or h <= 1:
+            return
+
+        pl = self._PAD_L
+        pr = self._PAD_R
+        pt = self._PAD_T
+        pb = self._PAD_B
+        gw = w - pl - pr   # グラフ描画幅
+        gh = h - pt - pb   # グラフ描画高さ
+        if gw <= 0 or gh <= 0:
+            return
+
+        # ── グリッド & ラベル ──────────────────────────────────────────
+        for val, lbl in [(0.0, "0.0"), (0.3, "0.3"), (0.6, "0.6"), (1.0, "1.0")]:
+            y = pt + int(gh * (1.0 - val))
+            grid_color = "#333355" if val not in (0.0, 1.0) else "#444466"
+            c.create_line(pl, y, pl + gw, y, fill=grid_color, width=1)
+            c.create_text(pl - 4, y, text=lbl, anchor=tk.E,
+                          fill="#8888aa", font=("Consolas", 8))
+
+        # 軸線
+        c.create_line(pl, pt, pl, pt + gh, fill="#555577", width=1)
+        c.create_line(pl, pt + gh, pl + gw, pt + gh, fill="#555577", width=1)
+
+        if len(self._history) < 2:
+            c.create_text(
+                pl + gw // 2, pt + gh // 2,
+                text="データ待機中...",
+                fill="#556688", font=("Meiryo", 10),
+            )
+            return
+
+        # ── 折れ線 ────────────────────────────────────────────────────
+        n    = len(self._history)
+        span = self.HISTORY_MAX - 1
+        xs   = [pl + int(gw * i / span) for i in range(n)]
+        ys   = [pt + int(gh * (1.0 - v)) for v in self._history]
+
+        for i in range(n - 1):
+            v = self._history[i]
+            color = (
+                "#ff4444" if v >= 0.6 else
+                "#ffaa00" if v >= 0.3 else
+                "#44aaff"
+            )
+            c.create_line(xs[i], ys[i], xs[i + 1], ys[i + 1],
+                          fill=color, width=2)
+
+        # 最新値のドット
+        lx, ly = xs[-1], ys[-1]
+        v = self._history[-1]
+        dot = "#ff4444" if v >= 0.6 else "#ffaa00" if v >= 0.3 else "#44aaff"
+        c.create_oval(lx - 4, ly - 4, lx + 4, ly + 4,
+                      fill=dot, outline="#ffffff", width=1)
+
 
 # ── メインウィンドウ ──────────────────────────────────────────────────────────
 
@@ -782,9 +1504,12 @@ class EchoMateGUI:
 
         self._echo_mate: Optional[EchoMate] = None
         self._bubble:    Optional[SpeechBubble] = None
+        self._avatar:    Optional[AvatarWindow] = None
         self._running    = False
+        self._mic_monitor = MicMonitor()
 
         self._build_ui()
+        self._mic_monitor.start()
         self._check_services_async()
 
     # ── UI 構築 ───────────────────────────────────────────────────────────────
@@ -811,8 +1536,28 @@ class EchoMateGUI:
         self._char_tab = CharacterFrame(notebook, on_change=self._on_character_change)
         notebook.add(self._char_tab, text="  相棒設定  ")
 
-        self._bubble_tab = BubbleFrame(notebook, get_bubble=lambda: self._bubble)
+        self._mic_tab = MicSetupFrame(notebook, self._mic_monitor)
+        notebook.add(self._mic_tab, text="  マイク設定  ")
+
+        self._bubble_tab = BubbleFrame(
+            notebook,
+            get_bubble=lambda: self._bubble,
+            get_avatar=lambda: self._avatar,
+        )
         notebook.add(self._bubble_tab, text="  吹き出し  ")
+
+        self._learning_tab = LearningFrame(notebook)
+        notebook.add(self._learning_tab, text="  学習ノート  ")
+
+        self._mental_tab = MentalGraphFrame(
+            notebook, get_echo_mate=lambda: self._echo_mate
+        )
+        notebook.add(self._mental_tab, text="  メンタルグラフ  ")
+
+        self._profile_tab = ProfileFrame(
+            notebook, get_echo_mate=lambda: self._echo_mate
+        )
+        notebook.add(self._profile_tab, text="  プロファイル  ")
 
         # ── フッター: 起動/停止 ───────────────────────────────────────────
         footer = ttk.Frame(self.root)
@@ -877,21 +1622,26 @@ class EchoMateGUI:
             # 3. EchoMate 起動
             self.root.after(0, self._status_var.set, "EchoMate を起動中...")
             try:
-                char_key = self._char_tab.get_selected()
+                char_key      = self._char_tab.get_selected()
+                voice_device  = self._mic_tab.get_voice_input_device()
+                detect_device = self._mic_tab.get_audio_detect_device()
                 self._echo_mate = EchoMate(
                     character=char_key,
                     enable_cv=True,
                     enable_audio=True,
                     enable_dummy=False,
                     speech_callback=self._on_speech,
+                    voice_input_device=voice_device,
+                    audio_detect_device=detect_device,
                 )
                 self._echo_mate.start_background()
             except Exception as exc:
                 self.root.after(0, self._on_start_failed, f"EchoMate 起動エラー:\n{exc}")
                 return
 
-            # 4. 吹き出し作成
+            # 4. 吹き出し・アバター作成
             self.root.after(0, self._create_bubble)
+            self.root.after(0, self._create_avatar)
             self.root.after(0, self._on_start_success)
 
         threading.Thread(target=_launch, daemon=True, name="Launch").start()
@@ -923,6 +1673,9 @@ class EchoMateGUI:
 
     def _on_stop_done(self) -> None:
         self._running = False
+        if self._avatar:
+            self._avatar.destroy()
+            self._avatar = None
         self._btn_start.config(state=tk.NORMAL)
         self._status_var.set("停止中")
 
@@ -933,6 +1686,16 @@ class EchoMateGUI:
             self._bubble.destroy()
         self._bubble = SpeechBubble(master=self.root)
         self._bubble.show()
+
+    def _create_avatar(self) -> None:
+        if self._avatar:
+            self._avatar.destroy()
+        self._avatar = AvatarWindow(
+            master=self.root,
+            voice_output=self._echo_mate.voice_output if self._echo_mate else None,
+            state_manager=self._echo_mate.state_manager if self._echo_mate else None,
+        )
+        self._avatar.show()
 
     def _on_speech(self, text: str) -> None:
         """EchoMate の発話コールバック（ワーカースレッドから呼ばれる）"""
@@ -977,6 +1740,12 @@ class EchoMateGUI:
             if self._bubble:
                 try:
                     self._bubble.destroy()
+                except Exception:
+                    pass
+
+            if self._avatar:
+                try:
+                    self._avatar.destroy()
                 except Exception:
                     pass
 

@@ -65,13 +65,20 @@ class VoiceOutput:
     def __init__(self, speaker_id: int = DEFAULT_SPEAKER_ID) -> None:
         self.speaker_id = speaker_id
         self._lock = threading.Lock()
+        self._cancel_flag = False
         self._voicevox_available: bool | None = None
+        self.is_speaking: bool = False   # 再生中フラグ（アバター口パク用）
         logger.info("VoiceOutput initialized (speaker_id=%d)", speaker_id)
 
     def set_speaker(self, speaker_id: int) -> None:
         """キャラクター切替時に VOICEVOX の話者を変更する"""
         self.speaker_id = speaker_id
         logger.info("VOICEVOX speaker changed to %d", speaker_id)
+
+    def stop(self) -> None:
+        """再生中の音声を即座にキャンセルする（Barge-in対応）"""
+        self._cancel_flag = True
+        logger.debug("VoiceOutput: playback cancel requested")
 
     def speak(self, text: str) -> None:
         if not text:
@@ -130,8 +137,13 @@ class VoiceOutput:
                     rate=wf.getframerate(),
                     output=True,
                 )
+                self._cancel_flag = False  # 新しい再生開始時にリセット
+                self.is_speaking = True
                 data = wf.readframes(AUDIO_CHUNK_SIZE)
                 while data:
+                    if self._cancel_flag:
+                        logger.debug("VoiceOutput: playback interrupted (barge-in)")
+                        break
                     st.write(data)
                     data = wf.readframes(AUDIO_CHUNK_SIZE)
                 st.stop_stream()
@@ -139,6 +151,8 @@ class VoiceOutput:
                 p.terminate()
         except Exception as e:
             logger.error("Audio playback error: %s", e)
+        finally:
+            self.is_speaking = False
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +169,11 @@ class VoiceInput:
       - 初回起動時にモデルロードで数秒かかる
     """
 
-    def __init__(self, model_size: str = WHISPER_MODEL_SIZE) -> None:
+    def __init__(self, model_size: str = WHISPER_MODEL_SIZE, device_index: int | None = None) -> None:
         self._model: "WhisperModel | None" = None
         self._pa: "pyaudio.PyAudio | None" = None
         self._mic_available = False
+        self._device_index = device_index
         self._init(model_size)
 
     def _init(self, model_size: str) -> None:
@@ -198,6 +213,7 @@ class VoiceInput:
                 rate=WHISPER_RATE,
                 input=True,
                 frames_per_buffer=WHISPER_CHUNK,
+                input_device_index=self._device_index,
             )
 
             frames: list[bytes] = []

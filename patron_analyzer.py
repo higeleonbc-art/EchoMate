@@ -12,7 +12,6 @@ import json
 import logging
 import re
 import threading
-import time
 from typing import Optional
 
 import requests
@@ -81,6 +80,9 @@ class PatronAnalyzer:
                 self._apply_updates(updates, len(logs))
                 self.db.mark_analyzed([l["id"] for l in logs])
                 logger.info("Patron analysis complete")
+
+            # Task6a: 気になることリストの生成
+            self._extract_curiosities(logs)
         except Exception as e:
             logger.error("PatronAnalyzer error: %s", e)
         finally:
@@ -105,6 +107,8 @@ class PatronAnalyzer:
             '  "slang_usage": 0.0〜1.0,\n'
             '  "talkativeness": 0.0〜1.0,\n'
             '  "dislikes": ["嫌いなこと"],\n'
+            '  "playstyle_tags": ["ゴリ押し" or "慎重" or "探索好き" or "効率重視" or "楽しみ重視" など最大2つ],\n'
+            '  "memorable_episode": "特筆すべき印象的な出来事を20文字以内で。なければ空文字",\n'
             '  "summary": "30文字以内のユーザー傾向説明",\n'
             '  "confidence": 0.0〜1.0\n'
             "}\n\nJSON:"
@@ -213,6 +217,19 @@ class PatronAnalyzer:
             if item and isinstance(item, str):
                 self.profile.add_dislike(item)
 
+        # プレイスタイルタグ
+        playstyle_tags = updates.get("playstyle_tags", [])
+        if playstyle_tags and isinstance(playstyle_tags, list):
+            for tag in playstyle_tags[:2]:
+                if tag and isinstance(tag, str):
+                    self.profile.add_playstyle_label(tag)
+
+        # 印象的なエピソード
+        episode_text = updates.get("memorable_episode", "")
+        if episode_text and isinstance(episode_text, str):
+            current_game = self.profile.get_current_game()
+            self.profile.add_memorable_episode(episode_text, current_game)
+
         # 成長観察メモ
         if updates.get("summary"):
             self.profile.add_growth_observation(updates["summary"])
@@ -227,6 +244,68 @@ class PatronAnalyzer:
 
         # ファイルに保存
         self.profile.save()
+
+    # ------------------------------------------------------------------
+    # 気になることリスト抽出（Task6a）
+    # ------------------------------------------------------------------
+
+    def _extract_curiosities(self, logs: list[dict]) -> None:
+        """プレイヤーの発言から未知の専門用語・ゲーム内概念を抽出してcuriosity_list.jsonに保存する"""
+        user_inputs = [l["user_input"] for l in logs if l.get("user_input")]
+        if not user_inputs:
+            return
+
+        log_text = "\n".join(f"- {t}" for t in user_inputs[-20:])
+        prompt = (
+            "以下はゲームプレイ中のプレイヤーの発言です。\n"
+            "この中にある、一般的でない専門用語・ゲーム内の固有名詞（武器名、マップ名、スキル名、キャラクター名など）を抽出してください。\n"
+            "AIが詳しく知らない可能性のある言葉を選んでください。\n\n"
+            f"---\n{log_text}\n---\n\n"
+            "以下のJSON形式のみで回答してください（他のテキスト不要）:\n"
+            '{"words": ["単語1", "単語2", ...]}\n\nJSON:'
+        )
+
+        try:
+            resp = requests.post(
+                OLLAMA_API_URL,
+                json={
+                    "model":  OLLAMA_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.3, "num_predict": 200},
+                },
+                timeout=OLLAMA_TIMEOUT,
+            )
+            if resp.status_code != 200:
+                return
+
+            raw = resp.json().get("response", "")
+            parsed = self._parse_json_response(raw)
+            if not parsed or "words" not in parsed:
+                return
+
+            words = [w for w in parsed["words"] if isinstance(w, str) and w.strip()]
+            if not words:
+                return
+
+            from web_learner import load_curiosity_list, save_curiosity_list, load_game_knowledge
+            existing = load_curiosity_list()
+            existing_words = {c["word"] for c in existing}
+            known_words = set(load_game_knowledge().keys())
+
+            new_count = 0
+            for word in words:
+                if word not in existing_words and word not in known_words:
+                    existing.append({"word": word})
+                    existing_words.add(word)
+                    new_count += 1
+
+            if new_count > 0:
+                save_curiosity_list(existing)
+                logger.info("Curiosity list updated: %d new words added", new_count)
+
+        except Exception as e:
+            logger.error("Curiosity extraction error: %s", e)
 
     # ------------------------------------------------------------------
     # ユーティリティ
