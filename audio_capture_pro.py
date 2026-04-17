@@ -38,7 +38,7 @@ class AudioCaptureProWrapper:
     audio_detector._audio_loop_pac がこの値でスパイク検出を行う。
     """
 
-    def __init__(self, pid: int, queue_maxsize: int = 64) -> None:
+    def __init__(self, pid: int | None, queue_maxsize: int = 64) -> None:
         if not _PAC_AVAILABLE:
             raise RuntimeError(
                 "process-audio-capture is not installed. Run: pip install process-audio-capture"
@@ -68,7 +68,7 @@ class AudioCaptureProWrapper:
         )
         self._capture.start()
         self.running = True
-        logger.info("AudioCaptureProWrapper started (pid=%d)", self._pid)
+        logger.info("AudioCaptureProWrapper started (pid=%s)", self._pid)
 
     def stop(self) -> None:
         self.running = False

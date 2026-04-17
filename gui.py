@@ -220,37 +220,6 @@ class MicMonitor:
             p.terminate()
 
 
-# ── プロセス列挙 ──────────────────────────────────────────────────────────────
-
-def list_running_exes() -> list[str]:
-    """実行中プロセスの EXE 名を一覧取得する（重複なし・ソート済み）"""
-    names: set[str] = set()
-
-    if _PSUTIL:
-        for proc in psutil.process_iter(["name"]):
-            try:
-                name = proc.info["name"]
-                if name and name.lower().endswith(".exe"):
-                    names.add(name)
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-    else:
-        # fallback: tasklist コマンドを利用
-        try:
-            result = subprocess.run(
-                ["tasklist", "/fo", "csv", "/nh"],
-                capture_output=True, text=True, timeout=5
-            )
-            for line in result.stdout.splitlines():
-                parts = line.strip('"').split('","')
-                if parts:
-                    name = parts[0]
-                    if name.lower().endswith(".exe"):
-                        names.add(name)
-        except Exception:
-            pass
-
-    return sorted(names, key=str.lower)
 
 
 def detect_preset(exe_name: str) -> Optional[str]:
@@ -594,30 +563,20 @@ class GameSetupFrame(ttk.Frame):
     def __init__(self, master: tk.Misc) -> None:
         super().__init__(master)
         self._screenshot_path: Optional[str] = None
+        self._exe_path: Optional[str] = None
         self._build()
 
     def _build(self) -> None:
-        # ── プロセスリスト ────────────────────────────────────────────────
-        list_frame = ttk.LabelFrame(self, text="実行中のプロセス")
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(8, 4))
+        # ── EXE 参照 ──────────────────────────────────────────────────────
+        exe_frame = ttk.LabelFrame(self, text="ゲーム EXE")
+        exe_frame.pack(fill=tk.X, padx=8, pady=(8, 4))
 
-        scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
-        self._proc_list = tk.Listbox(
-            list_frame,
-            yscrollcommand=scroll.set,
-            height=8,
-            selectmode=tk.SINGLE,
-            font=("Consolas", 10),
-            exportselection=False,
-        )
-        scroll.config(command=self._proc_list.yview)
-        self._proc_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0), pady=4)
-        scroll.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 4), pady=4)
-
-        btn_row = ttk.Frame(list_frame)
-        btn_row.pack(fill=tk.X, padx=4, pady=(0, 4))
-        ttk.Button(btn_row, text="一覧を更新", command=self._refresh_procs).pack(side=tk.LEFT)
-        self._proc_list.bind("<<ListboxSelect>>", self._on_proc_select)
+        exe_row = ttk.Frame(exe_frame)
+        exe_row.pack(fill=tk.X, padx=4, pady=6)
+        self._exe_var = tk.StringVar(value="（未選択）")
+        ttk.Entry(exe_row, textvariable=self._exe_var, state="readonly",
+                  width=36, font=("Consolas", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(exe_row, text="参照...", command=self._browse_exe).pack(side=tk.LEFT, padx=(4, 0))
 
         # ── プリセット ────────────────────────────────────────────────────
         preset_frame = ttk.LabelFrame(self, text="プリセット")
@@ -667,11 +626,9 @@ class GameSetupFrame(ttk.Frame):
         self._refresh_monitors()
 
         # ── ステータス ────────────────────────────────────────────────────
-        self._status_var = tk.StringVar(value="プロセスを選択してください")
+        self._status_var = tk.StringVar(value="EXE を選択してください")
         ttk.Label(self, textvariable=self._status_var,
                   foreground="gray").pack(anchor=tk.W, padx=10, pady=(0, 4))
-
-        self._refresh_procs()
 
     # ── モニターリスト ────────────────────────────────────────────────────────
 
@@ -703,36 +660,27 @@ class GameSetupFrame(ttk.Frame):
         sel = self._monitor_combo.current()
         return max(1, sel + 1)  # combobox は 0-origin なので +1
 
-    def get_selected_pid(self) -> Optional[int]:
-        """プロセスリストで選択中の EXE の PID を返す。未選択・取得失敗時は None。"""
-        sel = self._proc_list.curselection()
-        if not sel:
+    def get_selected_exe(self) -> Optional[str]:
+        """選択中の EXE のファイル名（basename）を返す。未選択時は None。"""
+        if not self._exe_path:
             return None
-        exe = self._proc_list.get(sel[0])
-        if not _PSUTIL:
-            return None
-        try:
-            for proc in psutil.process_iter(["name", "pid"]):
-                if proc.info["name"] and proc.info["name"].lower() == exe.lower():
-                    return proc.info["pid"]
-        except Exception:
-            pass
-        return None
+        return os.path.basename(self._exe_path)
 
-    # ── プロセスリスト ────────────────────────────────────────────────────────
+    # ── EXE 参照 ──────────────────────────────────────────────────────────────
 
-    def _refresh_procs(self) -> None:
-        self._proc_list.delete(0, tk.END)
-        for name in list_running_exes():
-            self._proc_list.insert(tk.END, name)
-        self._status_var.set(f"{self._proc_list.size()} 件のプロセスが見つかりました")
-
-    def _on_proc_select(self, _event=None) -> None:
-        sel = self._proc_list.curselection()
-        if not sel:
+    def _browse_exe(self) -> None:
+        path = filedialog.askopenfilename(
+            title="ゲーム EXE を選択",
+            filetypes=[("EXE ファイル", "*.exe"), ("すべてのファイル", "*.*")],
+        )
+        if not path:
             return
-        exe = self._proc_list.get(sel[0])
-        preset = detect_preset(exe)
+        self._exe_path = path
+        exe_name = os.path.basename(path)
+        self._exe_var.set(exe_name)
+        self._status_var.set(f"選択: {exe_name}")
+
+        preset = detect_preset(exe_name)
         if preset:
             self._preset_var.set(preset)
             self._btn_preset.config(state=tk.NORMAL)
@@ -742,8 +690,6 @@ class GameSetupFrame(ttk.Frame):
             self._btn_preset.config(state=tk.DISABLED)
             can_capture = _WIN32 and _MSS
             self._btn_capture.config(state=tk.NORMAL if can_capture else tk.DISABLED)
-
-        self._status_var.set(f"選択: {exe}")
 
     # ── プリセット適用 ────────────────────────────────────────────────────────
 
@@ -764,10 +710,9 @@ class GameSetupFrame(ttk.Frame):
     # ── スクリーンショット ────────────────────────────────────────────────────
 
     def _capture_screenshot(self) -> None:
-        sel = self._proc_list.curselection()
-        if not sel:
+        exe = self.get_selected_exe()
+        if not exe:
             return
-        exe = self._proc_list.get(sel[0])
         rect = get_window_rect_for_exe(exe)
         if not rect:
             messagebox.showwarning(
@@ -1793,7 +1738,7 @@ class EchoMateGUI:
                 voice_device   = self._mic_tab.get_voice_input_device()
                 detect_device  = self._mic_tab.get_audio_detect_device()
                 monitor_idx    = self._game_tab.get_monitor_index()
-                target_pid     = self._game_tab.get_selected_pid()
+                target_exe     = self._game_tab.get_selected_exe()
                 exclude_pids   = ServiceManager.get_voicevox_pids()
                 self._echo_mate = EchoMate(
                     character=char_key,
@@ -1804,7 +1749,7 @@ class EchoMateGUI:
                     voice_input_device=voice_device,
                     audio_detect_device=detect_device,
                     vision_monitor_index=monitor_idx,
-                    audio_target_pid=target_pid,
+                    audio_target_exe=target_exe,
                     audio_exclude_pids=exclude_pids or None,
                 )
                 self._echo_mate.start_background()

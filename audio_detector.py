@@ -79,17 +79,17 @@ class AudioDetector:
         device_index: int | None = None,
         vision_trigger_fn=None,          # Callable[[str, float, float], None] | None
         voice_output=None,               # VoiceOutput | None — フォールバックモードの自己応答防止用
-        target_pid: int | None = None,   # キャプチャ対象プロセスの PID
+        target_exe: str | None = None,   # キャプチャ対象プロセスの EXE 名（PID を動的解決）
         exclude_pids: list[int] | None = None,  # 除外 PID（VOICEVOX 等）
     ) -> None:
         self.event_manager = event_manager
         self.device_index = device_index
         self.vision_trigger_fn = vision_trigger_fn  # 設定時は音スパイクをVisionに委譲
         self.voice_output = voice_output
-        self.target_pid = target_pid
+        self.target_exe = target_exe
         self.exclude_pids = exclude_pids or []
-        # PID 指定なしはシステム全体取得（フォールバック）→ 自己応答防止ガード有効
-        self.is_fallback_mode: bool = (target_pid is None)
+        # EXE 指定なしはシステム全体取得（フォールバック）→ 自己応答防止ガード有効
+        self.is_fallback_mode: bool = (target_exe is None)
         self.current_rms: float = 0.0
         self.running = False
         self._thread: threading.Thread | None = None
@@ -169,11 +169,33 @@ class AudioDetector:
         except Exception:
             return RATE
 
+    @staticmethod
+    def _find_pid_by_exe(exe_name: str) -> int | None:
+        try:
+            import psutil
+            for proc in psutil.process_iter(["name", "pid"]):
+                if proc.info["name"] and proc.info["name"].lower() == exe_name.lower():
+                    return proc.info["pid"]
+        except Exception:
+            pass
+        return None
+
+    def _wait_for_process(self, exe_name: str, poll_interval: float = 2.0) -> int | None:
+        """EXE が起動するまでポーリングし、PID を返す。running=False になったら None。"""
+        logger.info("Waiting for process: %s", exe_name)
+        while self.running:
+            pid = self._find_pid_by_exe(exe_name)
+            if pid is not None:
+                logger.info("Process found: %s (pid=%d)", exe_name, pid)
+                return pid
+            time.sleep(poll_interval)
+        return None
+
     def _audio_loop(self) -> None:
         """マイクまたはループバックデバイスから連続取得してRMSを評価するメインループ"""
         from audio_capture_pro import is_available as is_pac_available
-        if is_pac_available() and (self.target_pid or self.exclude_pids):
-            self.is_fallback_mode = (self.target_pid is None)
+        if is_pac_available() and (self.target_exe or self.exclude_pids):
+            self.is_fallback_mode = (self.target_exe is None)
             self._audio_loop_pac()
             return
 
@@ -239,47 +261,73 @@ class AudioDetector:
             logger.info("Audio stream closed")
 
     def _audio_loop_pac(self) -> None:
-        """process-audio-capture ラッパーを使ったキャプチャループ（PID 指定時）"""
+        """process-audio-capture ラッパーを使ったキャプチャループ。
+        target_exe 指定時はプロセス終了後も待機して再接続する。"""
         from audio_capture_pro import AudioCaptureProWrapper
-        wrapper = AudioCaptureProWrapper(pid=self.target_pid)
-        wrapper.start()
-        logger.info(
-            "AudioDetector using PAC wrapper (target_pid=%s, fallback=%s)",
-            self.target_pid, self.is_fallback_mode,
-        )
 
-        baseline = 0.0
-        frame_count = 0
+        ALIVE_CHECK_INTERVAL = 5.0  # プロセス生存確認の間隔（秒）
 
-        try:
-            while self.running:
-                rms = wrapper.read_rms()
-                if rms is None:
-                    continue
+        while self.running:
+            # EXE名モード: プロセスが起動するまで待つ
+            if self.target_exe:
+                pid = self._wait_for_process(self.target_exe)
+                if pid is None:
+                    break  # running=False で停止
+            else:
+                pid = None  # フォールバック（exclude_pids のみ指定）
 
-                self.current_rms = rms
-                baseline = EMA_ALPHA * rms + (1.0 - EMA_ALPHA) * baseline
-                frame_count += 1
+            wrapper = AudioCaptureProWrapper(pid=pid)
+            wrapper.start()
+            logger.info("PAC wrapper started (exe=%s, pid=%s, fallback=%s)",
+                        self.target_exe, pid, self.is_fallback_mode)
 
-                if frame_count < WARMUP_FRAMES:
-                    continue
+            baseline = 0.0
+            frame_count = 0
+            last_alive_check = time.time()
 
-                if self.is_fallback_mode and self.voice_output and self.voice_output.is_speaking:
-                    continue
+            try:
+                while self.running:
+                    rms = wrapper.read_rms()
+                    now = time.time()
 
-                spike = rms - baseline
-                logger.debug("PAC RMS=%.4f baseline=%.4f spike=%.4f", rms, baseline, spike)
+                    if rms is None:
+                        # プロセス生存確認（EXE名モードのみ）
+                        if self.target_exe and now - last_alive_check > ALIVE_CHECK_INTERVAL:
+                            last_alive_check = now
+                            if self._find_pid_by_exe(self.target_exe) is None:
+                                logger.info("Process exited: %s — waiting for restart", self.target_exe)
+                                break
+                        time.sleep(0.01)
+                        continue
 
-                for rule in self.rules:
-                    if spike >= rule["threshold"]:
-                        self._fire_event(rule, rms, spike)
+                    last_alive_check = now
+                    self.current_rms = rms
+                    baseline = EMA_ALPHA * rms + (1.0 - EMA_ALPHA) * baseline
+                    frame_count += 1
 
-        except Exception as e:
-            logger.error("AudioDetector PAC loop error: %s", e)
-        finally:
-            wrapper.stop()
-            self.current_rms = 0.0
-            logger.info("PAC audio loop closed")
+                    if frame_count < WARMUP_FRAMES:
+                        continue
+
+                    if self.is_fallback_mode and self.voice_output and self.voice_output.is_speaking:
+                        continue
+
+                    spike = rms - baseline
+                    logger.debug("PAC RMS=%.4f baseline=%.4f spike=%.4f", rms, baseline, spike)
+
+                    for rule in self.rules:
+                        if spike >= rule["threshold"]:
+                            self._fire_event(rule, rms, spike)
+
+            except Exception as e:
+                logger.error("AudioDetector PAC loop error: %s", e)
+            finally:
+                wrapper.stop()
+                self.current_rms = 0.0
+                logger.info("PAC audio loop closed (exe=%s, pid=%s)", self.target_exe, pid)
+
+            # EXE名モードでなければ再試行しない
+            if not self.target_exe:
+                break
 
     # ------------------------------------------------------------------
     # イベント発火

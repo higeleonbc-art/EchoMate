@@ -203,7 +203,7 @@ class EchoMate:
         voice_input_device: Optional[int] = None,    # 音声認識用マイク
         audio_detect_device: Optional[int] = None,   # ゲームイベント検知用（ループバック可）
         vision_monitor_index: int = 1,               # Vision 解析対象モニター（1=プライマリ）
-        audio_target_pid: Optional[int] = None,      # 音声キャプチャ対象プロセス PID
+        audio_target_exe: Optional[str] = None,       # 音声キャプチャ対象プロセス EXE 名
         audio_exclude_pids: Optional[list] = None,   # 音声キャプチャ除外 PID リスト
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -232,7 +232,7 @@ class EchoMate:
 
         # 検出器
         self.cv_detector    = OpenCVDetector(self.event_manager) if enable_cv    else None
-        self.audio_detector = AudioDetector(self.event_manager, device_index=audio_detect_device, voice_output=self.voice_output, target_pid=audio_target_pid, exclude_pids=audio_exclude_pids) if enable_audio else None
+        self.audio_detector = AudioDetector(self.event_manager, device_index=audio_detect_device, voice_output=self.voice_output, target_exe=audio_target_exe, exclude_pids=audio_exclude_pids) if enable_audio else None
         self.vision_analyzer = VisionAnalyzer(monitor_index=vision_monitor_index) if enable_vision else None
 
         # VisionAnalyzer と AudioDetector を音トリガー型で連携
