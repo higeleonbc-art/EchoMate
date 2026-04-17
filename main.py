@@ -52,6 +52,7 @@ from patron_db import PatronDB
 from user_profile import UserProfile
 from patron_analyzer import PatronAnalyzer
 from observer import ObserverModule
+from sentiment_analyzer import analyze as analyze_sentiment
 
 # ---------------------------------------------------------------------------
 # ロギング
@@ -75,7 +76,14 @@ def _setup_logging(level: int = logging.INFO) -> None:
         maxBytes=10 * 1024 * 1024,  # 10 MB
         backupCount=5,
         encoding="utf-8",
+        errors="replace",
     )
+    # Windows コンソールの文字化け防止
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     logging.basicConfig(
         level=level,
         format=fmt,
@@ -515,7 +523,12 @@ class EchoMate:
         if len(clean_text) >= 10 and random.random() < 0.3:
             self._speak_async(random.choice(["うーん…", "あー、", "なるほど…"]))
 
-        response = self.ai.get_response(player_text, memory, state, growth_hint=growth_hint)
+        sentiment = analyze_sentiment(player_text)
+        response = self.ai.get_response(
+            player_text, memory, state,
+            growth_hint=growth_hint,
+            sentiment_context=sentiment.to_prompt_string(),
+        )
 
         # 安全フィルター（ObserverModule）
         tension      = state.to_dict().get("tension", 0.0) if hasattr(state, "to_dict") else 0.0

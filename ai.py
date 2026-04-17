@@ -174,16 +174,19 @@ class AICompanion:
         memory: dict,
         state=None,
         growth_hint: Optional[str] = None,
+        sentiment_context: Optional[str] = None,
     ) -> str:
         """プレイヤー発言に対する会話応答を返す"""
         memory_ctx  = self._build_memory_context(memory)
         history_ctx = self._build_history_context()
         state_ctx   = state.summary() if state else "（状態情報なし）"
 
+        sentiment_line = f"{sentiment_context}\n" if sentiment_context else ""
         prompt = (
             f"{memory_ctx}\n\n"
             f"現在の状態:\n{state_ctx}\n\n"
             f"{history_ctx}\n"
+            f"{sentiment_line}"
             f"プレイヤーの発言:「{player_input}」\n\n"
             "【重要】状況を説明するのではなく、状況を踏まえてプレイヤーに対し感情的にリアクションしてください。\n"
             "ルール: 1〜2文・最大40文字・フランク・時々質問・日本語のみ\n"
@@ -370,7 +373,10 @@ class AICompanion:
         try:
             basic = self._user_profile.get_summary_for_prompt()
             growth = self._user_profile.get_growth_summary_for_prompt()
+            context_summary = self._user_profile.get_context_summary()
             parts = [p for p in [basic, growth] if p]
+            if context_summary:
+                parts.append(f"【最近の文脈】{context_summary}")
             return "\n".join(parts)
         except Exception:
             return ""

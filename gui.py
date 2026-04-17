@@ -833,11 +833,15 @@ class MicSetupFrame(ttk.Frame):
 
     _RMS_SCALE = 800  # RMS → プログレスバー変換係数
 
-    def __init__(self, master: tk.Misc, mic_monitor: MicMonitor) -> None:
+    def __init__(self, master: tk.Misc, mic_monitor: MicMonitor,
+                 audio_monitor: MicMonitor) -> None:
         super().__init__(master)
         self._monitor = mic_monitor          # 音声認識デバイスのレベル監視
-        self._mic_devices:  list[tuple[int, str]] = []  # マイク入力デバイス
-        self._detect_devices: list[tuple[int, str]] = []  # 検知デバイス
+        self._audio_monitor = audio_monitor  # ゲーム音（ループバック）のレベル監視
+        self._mic_devices:  list[tuple[int, str]] = []
+        self._detect_devices: list[tuple[int, str]] = []
+        self._audio_peak_rms:   float = 0.0
+        self._audio_peak_decay: int   = 0
         self._build()
         self._poll_level()
 
@@ -906,7 +910,7 @@ class MicSetupFrame(ttk.Frame):
 
         # ループバックデバイス選択（ループバックモード時のみ有効）
         self._detect_row = ttk.Frame(detect_frame)
-        self._detect_row.pack(fill=tk.X, padx=8, pady=(0, 6))
+        self._detect_row.pack(fill=tk.X, padx=8, pady=(0, 2))
         self._detect_var   = tk.StringVar()
         self._detect_combo = ttk.Combobox(
             self._detect_row, textvariable=self._detect_var,
@@ -918,6 +922,19 @@ class MicSetupFrame(ttk.Frame):
         self._detect_status_var = tk.StringVar(value="")
         ttk.Label(self._detect_row, textvariable=self._detect_status_var,
                   font=("Meiryo", 8), foreground="gray").pack(side=tk.LEFT, padx=6)
+
+        # ゲーム音レベルバー（ループバックモード時のみ有効）
+        self._audio_canvas = tk.Canvas(detect_frame, height=22, bg="#1e1e1e",
+                                       highlightthickness=0)
+        self._audio_canvas.pack(fill=tk.X, padx=6, pady=(2, 2))
+        self._audio_bar_id  = self._audio_canvas.create_rectangle(0, 0, 0, 22, fill="#44aaff", outline="")
+        self._audio_peak_id = self._audio_canvas.create_rectangle(0, 0, 0, 22, fill="#ffffff", outline="")
+
+        audio_info = ttk.Frame(detect_frame)
+        audio_info.pack(fill=tk.X, padx=6, pady=(0, 6))
+        self._audio_rms_var = tk.StringVar(value="RMS: 0.0000")
+        ttk.Label(audio_info, textvariable=self._audio_rms_var,
+                  font=("Consolas", 8), foreground="gray").pack(side=tk.LEFT)
 
         if not _PYAUDIO_AVAILABLE:
             self._mic_status_var.set("pyaudio が未インストールです")
@@ -940,6 +957,7 @@ class MicSetupFrame(ttk.Frame):
             self._refresh_detect_devices()
         else:
             self._detect_status_var.set("（音声認識デバイスと同一）")
+            self._audio_monitor.stop()
 
     # ── デバイスリスト更新 ────────────────────────────────────────────────────
 
@@ -961,11 +979,24 @@ class MicSetupFrame(ttk.Frame):
         if self._detect_devices:
             self._detect_combo["values"] = [f"[{i}] {n}" for i, n in self._detect_devices]
             self._detect_combo.current(0)
+            self._detect_combo.bind("<<ComboboxSelected>>", self._on_detect_select)
             self._detect_status_var.set(f"{len(self._detect_devices)} デバイス検出")
+            self._on_detect_select()
         else:
             self._detect_combo["values"] = ["（ループバックデバイスなし）"]
             self._detect_combo.current(0)
             self._detect_status_var.set("デバイスなし")
+            self._audio_monitor.stop()
+
+    def _on_detect_select(self, _event=None) -> None:
+        if self._mode_var.get() != "loopback":
+            return
+        sel = self._detect_combo.current()
+        if 0 <= sel < len(self._detect_devices):
+            dev_idx, _ = self._detect_devices[sel]
+            self._audio_monitor.set_device(dev_idx)
+        else:
+            self._audio_monitor.stop()
 
     def _on_mic_select(self, _event=None) -> None:
         sel = self._mic_combo.current()
@@ -976,6 +1007,7 @@ class MicSetupFrame(ttk.Frame):
     # ── レベルポーリング ──────────────────────────────────────────────────────
 
     def _poll_level(self) -> None:
+        # マイクレベルバー
         rms = self._monitor.current_rms
         self._rms_var.set(f"RMS: {rms:.4f}")
 
@@ -999,6 +1031,33 @@ class MicSetupFrame(ttk.Frame):
             self._canvas.coords(self._bar_id,  0, 0, bar_x, 22)
             self._canvas.itemconfig(self._bar_id, fill=color)
             self._canvas.coords(self._peak_id, peak_x - 2, 0, peak_x + 2, 22)
+        except Exception:
+            pass
+
+        # ゲーム音（ループバック）レベルバー
+        arms = self._audio_monitor.current_rms
+        self._audio_rms_var.set(f"RMS: {arms:.4f}")
+
+        if arms > self._audio_peak_rms:
+            self._audio_peak_rms   = arms
+            self._audio_peak_decay = 0
+        else:
+            self._audio_peak_decay += 1
+            if self._audio_peak_decay > 30:
+                self._audio_peak_rms = max(0.0, self._audio_peak_rms - 0.001)
+
+        try:
+            w = self._audio_canvas.winfo_width()
+            if w < 2:
+                w = 400
+            ascaled      = min(arms * self._RMS_SCALE, 100) / 100
+            apeak_scaled = min(self._audio_peak_rms * self._RMS_SCALE, 100) / 100
+            abar_x  = int(w * ascaled)
+            apeak_x = int(w * apeak_scaled)
+            acolor  = "#44aaff" if ascaled < 0.5 else ("#aa66ff" if ascaled < 0.8 else "#ff4444")
+            self._audio_canvas.coords(self._audio_bar_id,  0, 0, abar_x, 22)
+            self._audio_canvas.itemconfig(self._audio_bar_id, fill=acolor)
+            self._audio_canvas.coords(self._audio_peak_id, apeak_x - 2, 0, apeak_x + 2, 22)
         except Exception:
             pass
 
@@ -1554,8 +1613,9 @@ class EchoMateGUI:
         self._echo_mate: Optional[EchoMate] = None
         self._bubble:    Optional[SpeechBubble] = None
         self._avatar:    Optional[AvatarWindow] = None
-        self._running    = False
-        self._mic_monitor = MicMonitor()
+        self._running      = False
+        self._mic_monitor  = MicMonitor()
+        self._audio_monitor = MicMonitor()
 
         self._build_ui()
         self._mic_monitor.start()
@@ -1585,7 +1645,7 @@ class EchoMateGUI:
         self._char_tab = CharacterFrame(notebook, on_change=self._on_character_change)
         notebook.add(self._char_tab, text="  相棒設定  ")
 
-        self._mic_tab = MicSetupFrame(notebook, self._mic_monitor)
+        self._mic_tab = MicSetupFrame(notebook, self._mic_monitor, self._audio_monitor)
         notebook.add(self._mic_tab, text="  マイク設定  ")
 
         self._bubble_tab = BubbleFrame(

@@ -5,7 +5,8 @@
       "Bash(python -c \"from vision_analyzer import VisionAnalyzer; print\\('OK'\\)\")",
       "Bash(python -c \"from main import EchoMate; print\\('OK'\\)\")",
       "Bash(ollama list *)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(python -c \"import ast, sys; ast.parse\\(open\\('gui.py', encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")"
     ]
   }
 }

@@ -90,6 +90,10 @@ class PatronAnalyzer:
 
             # Task6a: 気になることリストの生成
             self._extract_curiosities(logs)
+
+            # 長期記憶の要約（30件以上蓄積時）
+            if len(logs) >= 30:
+                self._summarize_history(logs)
         except Exception as e:
             logger.error("PatronAnalyzer error: %s", e)
         finally:
@@ -105,20 +109,21 @@ class PatronAnalyzer:
             "---\n"
             f"{log_text}\n"
             "---\n\n"
-            "以下のJSON形式のみで回答してください（他のテキスト不要）:\n"
+            "【厳命】JSON オブジェクト以外は一切出力するな。説明文・前置き・改行も不要。"
+            "必ず { で始まり } で終わる純粋な JSON のみを返せ。\n"
             "{\n"
             '  "response_length_preference": "short" or "medium" or "long",\n'
             '  "tone_preference": "casual" or "formal" or "energetic" or "calm",\n'
-            '  "stress_tolerance": 0.0〜1.0,\n'
-            '  "aggressiveness": 0.0〜1.0,\n'
-            '  "slang_usage": 0.0〜1.0,\n'
-            '  "talkativeness": 0.0〜1.0,\n'
+            '  "stress_tolerance": 0.0〜1.0の数値,\n'
+            '  "aggressiveness": 0.0〜1.0の数値,\n'
+            '  "slang_usage": 0.0〜1.0の数値,\n'
+            '  "talkativeness": 0.0〜1.0の数値,\n'
             '  "dislikes": ["嫌いなこと"],\n'
             '  "playstyle_tags": ["ゴリ押し" or "慎重" or "探索好き" or "効率重視" or "楽しみ重視" など最大2つ],\n'
             '  "memorable_episode": "特筆すべき印象的な出来事を20文字以内で。なければ空文字",\n'
             '  "summary": "30文字以内のユーザー傾向説明",\n'
-            '  "confidence": 0.0〜1.0\n'
-            "}\n\nJSON:"
+            '  "confidence": 0.0〜1.0の数値\n'
+            "}"
         )
 
         try:
@@ -152,15 +157,17 @@ class PatronAnalyzer:
 
     def _parse_json_response(self, raw: str) -> Optional[dict]:
         """LLMの応答からJSONブロックを抽出してパースする"""
-        # コードブロック除去
+        # <think> タグ・コードブロック除去
+        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
         raw = re.sub(r"```[a-z]*", "", raw).strip()
-        # 最初の { から最後の } までを抽出
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not match:
+        # 最初の { から最後の } までを確実に抽出（greedy で末尾 } まで）
+        start = raw.find("{")
+        end   = raw.rfind("}")
+        if start == -1 or end == -1 or end <= start:
             logger.warning("No JSON found in analysis response")
             return None
         try:
-            return json.loads(match.group())
+            return json.loads(raw[start:end + 1])
         except json.JSONDecodeError as e:
             logger.warning("JSON parse error in analysis: %s", e)
             return None
@@ -313,6 +320,47 @@ class PatronAnalyzer:
 
         except Exception as e:
             logger.error("Curiosity extraction error: %s", e)
+
+    # ------------------------------------------------------------------
+    # 長期記憶の要約
+    # ------------------------------------------------------------------
+
+    def _summarize_history(self, logs: list[dict]) -> None:
+        """蓄積ログをLLMで要約し、UserProfileに「最近の文脈」として保存する"""
+        log_text = self._format_logs(logs)
+        prompt = (
+            "以下はゲームプレイ中のユーザーとAIの会話ログ（直近30件）です。\n"
+            "この内容を AIが次のセッションで参照できるよう、重要な出来事・発言・傾向を\n"
+            "100文字以内の日本語で簡潔に要約してください。\n\n"
+            "---\n"
+            f"{log_text}\n"
+            "---\n\n"
+            "【厳命】要約文のみを出力せよ。JSON や前置きは不要。\n"
+            "要約:"
+        )
+        try:
+            res = httpx.post(
+                OLLAMA_API_URL,
+                json={
+                    "model":  OLLAMA_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.3, "num_predict": 150},
+                },
+                timeout=OLLAMA_TIMEOUT,
+            )
+            if res.status_code != 200:
+                return
+            raw = res.json().get("response", "").strip()
+            # <think> タグ除去
+            import re as _re
+            raw = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL).strip()
+            if raw:
+                self.profile.update_context_summary(raw)
+                self.profile.save()
+                logger.info("Context summary updated (%d chars)", len(raw))
+        except Exception as e:
+            logger.error("History summarization error: %s", e)
 
     # ------------------------------------------------------------------
     # ユーティリティ

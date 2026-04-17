@@ -54,12 +54,21 @@ REQUEST_TIMEOUT_SYNTH = 10
 AUDIO_CHUNK_SIZE     = 1024
 
 # faster-whisper 設定
-WHISPER_MODEL_SIZE   = os.getenv("WHISPER_MODEL_SIZE", "small")  # base / small / medium（small 推奨）
+WHISPER_MODEL_SIZE   = os.getenv("WHISPER_MODEL_SIZE", "medium")  # base / small / medium / large-v3
 WHISPER_RATE         = 16000     # Whisper 最適サンプリングレート
 WHISPER_CHUNK        = 512
 SILENCE_RMS          = 0.012     # この RMS 以下を「無音」と判定
 SILENCE_FRAMES       = 30        # 無音フレームが続いたら発話終了（約 0.96 秒）
 MAX_RECORD_FRAMES    = 8 * (WHISPER_RATE // WHISPER_CHUNK)  # 最大録音 8 秒
+
+# LoL 専門用語辞書（Initial Prompt: 認識精度向上用）
+LOL_INITIAL_PROMPT = (
+    "チャンピオン, ミッド, ガンク, フラッシュ, インベード, バロン, ドラゴン, "
+    "リコール, ウルト, テレポート, スマイト, ジャングル, レーン, タワー, "
+    "ネクサス, アシスト, ペンタキル, スタック, CC, エンゲージ, デス, キル, "
+    "アドキャリー, サポート, トップ, ボット, ロスト, キャッチ, ワード, "
+    "ビジョン, スプリット, ティアマト, リセット, ゴースト, イグナイト"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -195,10 +204,16 @@ class VoiceInput:
             return
         try:
             logger.info("Loading Whisper model '%s' (first run may take a moment)...", model_size)
-            self._model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            # CUDA 優先、失敗時は CPU にフォールバック
+            try:
+                self._model = WhisperModel(model_size, device="cuda", compute_type="float16")
+                logger.info("VoiceInput (faster-whisper/%s) on CUDA/float16 ready", model_size)
+            except Exception as cuda_err:
+                logger.warning("CUDA unavailable (%s) — falling back to CPU/int8", cuda_err)
+                self._model = WhisperModel(model_size, device="cpu", compute_type="int8")
+                logger.info("VoiceInput (faster-whisper/%s) on CPU/int8 ready", model_size)
             self._pa = pyaudio.PyAudio()
             self._mic_available = True
-            logger.info("VoiceInput (faster-whisper/%s) ready", model_size)
         except Exception as e:
             logger.error("VoiceInput init error: %s", e)
 
@@ -265,6 +280,8 @@ class VoiceInput:
                 language="ja",
                 beam_size=5,
                 vad_filter=True,   # faster-whisper 内蔵 VAD で誤認識抑制
+                initial_prompt=LOL_INITIAL_PROMPT,
+                vad_parameters={"min_speech_duration_ms": 100},
             )
             text = "".join(s.text for s in segments).strip()
             if text:

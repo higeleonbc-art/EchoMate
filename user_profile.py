@@ -42,6 +42,7 @@ _DEFAULT_PROFILE: dict = {
         "last_updated":   0.0,
     },
     "growth_observations": [],         # 最新3件のみ保持
+    "recent_context_summary": "",     # 長期会話の要約（LLMで自動生成）
     # ── 良き隣人システム拡張フィールド ──
     "bond_level":        0.0,          # 0.0〜1.0 親密度の蓄積
     "playstyle_labels":  [],           # ["ゴリ押し", "慎重"] など
@@ -245,6 +246,16 @@ class UserProfile:
     # ------------------------------------------------------------------
     # 良き隣人システム拡張 setter
     # ------------------------------------------------------------------
+
+    def update_context_summary(self, summary: str) -> None:
+        """LLMが生成した長期会話の要約を保存する"""
+        with self._lock:
+            self._data["recent_context_summary"] = summary
+
+    def get_context_summary(self) -> str:
+        """保存済みの会話要約を返す（なければ空文字）"""
+        with self._lock:
+            return self._data.get("recent_context_summary", "")
 
     def add_bond(self, amount: float = 0.01) -> None:
         """親密度を加算する（上限 1.0）"""
