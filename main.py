@@ -38,6 +38,12 @@ import time
 import random
 import argparse
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 logger = logging.getLogger(__name__)
 
 from event import EventManager, GameEvent, generate_dummy_event
