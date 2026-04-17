@@ -1,2 +1,13 @@
 __pycache__/
 *.pyc
+
+# 生成ファイル
+cv_config.json
+memory.json
+echomate.log
+patron_logs.db
+user_profile.json
+
+# ローカル設定（モデル名・API URLなど）
+.env
+.clauderules

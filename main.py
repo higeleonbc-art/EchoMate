@@ -1,12 +1,13 @@
 """
-main.py - EchoMate メインスクリプト（v2）
+main.py - EchoMate メインスクリプト（v3 - 良き隣人システム）
 
-変更点:
-  - StateManager: 単発イベント → 状態（HP/テンション/連続キル）に変換
-  - MiniConversationManager: step1 後に step2(5s)・step3(10s) を時間差で発火
-  - キャラクター選択: --character <name> で起動時に指定（デフォルト: kid）
-  - VoiceOutput.set_speaker(): キャラ切替時に VOICEVOX 話者を自動変更
-  - AI プロンプトに PlayerState を組み込む
+変更点（v3）:
+  - PatronDB:       会話ログをSQLiteに記録（最大1000件・ローテーション）
+  - UserProfile:    ユーザー特性をJSONで永続管理
+  - PatronAnalyzer: 50〜100件蓄積時にバッチ分析してプロファイルを更新
+  - ObserverModule: 依存誘導・ロマンチック表現のフィルタリング・ストレス検知
+  - AICompanion:    UserProfileをRAG注入（プロファイルに基づいた応答調整）
+  - セッション終了時に分析を同期実行してプロファイルを最終更新
 
 アーキテクチャ:
   VoiceInputThread ──────────────────────────────────────┐
@@ -16,20 +17,28 @@ main.py - EchoMate メインスクリプト（v2）
                                     │
                            EventProcessorThread
                            ↓                 ↓
-                      StateManager       AICompanion
+                      StateManager       AICompanion ← UserProfile（RAG）
                                               ↓
                                MiniConversationManager
                                (step2: +5s, step3: +10s)
                                               ↓
+                                       ObserverModule（安全フィルター）
+                                              ↓
                                        VoiceOutput
+                                       PatronDB（ログ記録）
 """
 
+import json
 import logging
+import logging.handlers
+import re
 import sys
 import threading
 import time
 import random
 import argparse
+
+logger = logging.getLogger(__name__)
 
 from event import EventManager, GameEvent, generate_dummy_event
 from typing import Callable, Optional
@@ -37,7 +46,13 @@ from ai import AICompanion
 from voice import VoiceOutput, VoiceInput
 from opencv_detector import OpenCVDetector
 from audio_detector import AudioDetector
+from vision_analyzer import VisionAnalyzer, VISION_EVENT_PROMPT
 from state_manager import StateManager
+from patron_db import PatronDB
+from user_profile import UserProfile
+from patron_analyzer import PatronAnalyzer
+from observer import ObserverModule
+from sentiment_analyzer import analyze as analyze_sentiment
 
 # ---------------------------------------------------------------------------
 # ロギング
@@ -51,14 +66,30 @@ def _setup_logging(level: int = logging.INFO) -> None:
     echomate.log にはプレイヤーの発言・イベントが記録される。
     ファイルを他者と共有する際はプライバシーに注意すること。
     デバッグ時は --debug フラグで DEBUG レベルに切り替える。
+
+    RotatingFileHandler により echomate.log は最大 10MB × 5世代で
+    自動ローテーションされ、無限肥大化を防ぐ。
     """
     fmt = "%(asctime)s [%(levelname)-8s] %(name)s: %(message)s"
+    rotating = logging.handlers.RotatingFileHandler(
+        "echomate.log",
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=5,
+        encoding="utf-8",
+        errors="replace",
+    )
+    # Windows コンソールの文字化け防止
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     logging.basicConfig(
         level=level,
         format=fmt,
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler("echomate.log", encoding="utf-8"),
+            rotating,
         ],
     )
 
@@ -98,6 +129,14 @@ class MiniConversationManager:
         threading.Timer(self.STEP2_DELAY, self._fire_step, args=(event.id, 2)).start()
         threading.Timer(self.STEP3_DELAY, self._fire_step, args=(event.id, 3)).start()
 
+    def cancel_all(self) -> None:
+        """全アクティブなミニ会話をキャンセルする（プレイヤーが集中し始めたら空気を読む）"""
+        with self._lock:
+            count = len(self._active)
+            self._active.clear()
+        if count:
+            logger.debug("MiniConversation: %d active step(s) cancelled", count)
+
     def _fire_step(self, event_id: str, step: int) -> None:
         with self._lock:
             payload = self._active.get(event_id)
@@ -131,6 +170,7 @@ class EchoMate:
     PROACTIVE_COOLDOWN        = 120.0
     PROACTIVE_CHECK_INTERVAL  = 5.0
     STATE_TICK_INTERVAL       = 3.0   # StateManager.tick() の呼び出し間隔（秒）
+    EVENT_COOLDOWN_SEC        = 3.0   # 同一イベントの重複発話を防ぐクールダウン（秒）
 
     def __init__(
         self,
@@ -138,7 +178,11 @@ class EchoMate:
         enable_cv: bool = True,
         enable_audio: bool = True,
         enable_dummy: bool = False,
+        enable_vision: bool = True,
         speech_callback: Optional[Callable[[str], None]] = None,
+        voice_input_device: Optional[int] = None,    # 音声認識用マイク
+        audio_detect_device: Optional[int] = None,   # ゲームイベント検知用（ループバック可）
+        vision_monitor_index: int = 1,               # Vision 解析対象モニター（1=プライマリ）
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
 
@@ -147,7 +191,16 @@ class EchoMate:
         self.state_manager = StateManager()
         self.ai            = AICompanion()
         self.voice_output  = VoiceOutput()
-        self.voice_input   = VoiceInput()
+        self.voice_input   = VoiceInput(device_index=voice_input_device)
+
+        # 良き隣人システム
+        self.patron_db   = PatronDB()
+        self.user_profile = UserProfile(patron_db=self.patron_db)
+        self.analyzer    = PatronAnalyzer(self.patron_db, self.user_profile)
+        self.observer    = ObserverModule(self.user_profile)
+
+        # AIにプロファイルを接続（RAG）
+        self.ai.set_user_profile(self.user_profile)
 
         # キャラクター適用
         self._apply_character(character)
@@ -157,7 +210,13 @@ class EchoMate:
 
         # 検出器
         self.cv_detector    = OpenCVDetector(self.event_manager) if enable_cv    else None
-        self.audio_detector = AudioDetector(self.event_manager)  if enable_audio else None
+        self.audio_detector = AudioDetector(self.event_manager, device_index=audio_detect_device) if enable_audio else None
+        self.vision_analyzer = VisionAnalyzer(monitor_index=vision_monitor_index) if enable_vision else None
+
+        # VisionAnalyzer と AudioDetector を音トリガー型で連携
+        if self.audio_detector and self.vision_analyzer:
+            self.audio_detector.vision_trigger_fn = self._on_audio_spike
+            self.logger.info("Audio+Vision hybrid event detection enabled")
 
         # デバッグ・コールバック
         self.enable_dummy      = enable_dummy
@@ -167,6 +226,7 @@ class EchoMate:
         self.running              = False
         self._last_speech_time    = time.time()
         self._last_proactive_time = 0.0
+        self._event_cooldowns: dict[str, float] = {}
         self._threads: list[threading.Thread] = []
 
         self.event_manager.load_memory()
@@ -197,9 +257,43 @@ class EchoMate:
         """GUI から呼び出す非ブロッキング起動。スレッドを開始して即座に返る。"""
         self._start_threads()
 
+    def _check_game_change(self) -> None:
+        """
+        cv_config.json の _generated_for とプロファイルの current_game を比較し、
+        ゲームが変わっていればメタ挨拶を生成・再生する。
+        """
+        try:
+            with open("cv_config.json", encoding="utf-8") as f:
+                cv_cfg = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return
+
+        new_game = cv_cfg.get("_generated_for", "").strip()
+        if not new_game:
+            return
+
+        old_game = self.user_profile.get_current_game()
+
+        if old_game != new_game:
+            self.logger.info(
+                "Game change detected: '%s' → '%s'", old_game, new_game
+            )
+            greeting = self.ai.get_game_change_greeting(old_game, new_game)
+            print(f"\n[EchoMate→] {greeting}")
+            self._speak_async(greeting)
+            self._log_interaction(
+                event_type="game_change",
+                ai_response=greeting,
+                tags=["game_change"],
+                emotion_score=0.2,
+            )
+            self.user_profile.set_current_game(new_game)
+            self.user_profile.save()
+
     def _start_threads(self) -> None:
         """スレッドと検出器を起動する共通処理"""
         self.running = True
+        self._check_game_change()
         self._print_banner()
 
         thread_targets = [
@@ -227,6 +321,12 @@ class EchoMate:
         if self.audio_detector and self.audio_detector.is_available():
             self.audio_detector.start()
             print("[Audio] Audio spike detection enabled")
+
+        if self.vision_analyzer and self.vision_analyzer.is_available():
+            self.vision_analyzer.start()
+            print(f"[Vision] Screen analysis enabled (model={self.vision_analyzer.model})")
+        elif self.vision_analyzer:
+            print("[Vision] mss or Pillow not installed — screen analysis disabled")
         elif self.audio_detector:
             print("[Audio] pyaudio not installed — audio detection disabled")
 
@@ -236,7 +336,24 @@ class EchoMate:
             self.cv_detector.stop()
         if self.audio_detector:
             self.audio_detector.stop()
+        if self.vision_analyzer:
+            self.vision_analyzer.stop()
         self.event_manager.save_memory()
+
+        # セッション終了時の分析・プロファイル更新
+        try:
+            session_logs = self.patron_db.get_total_log_count()
+            self.user_profile.increment_session(session_logs)
+            # セッション終了ボーナス親密度（プレイ継続の報酬）
+            self.user_profile.add_bond(0.02)
+            if self.patron_db.count_unanalyzed() > 0:
+                self.logger.info("Running final patron analysis on session end...")
+                self.analyzer.analyze_sync()
+            else:
+                self.user_profile.save()
+        except Exception as e:
+            self.logger.error("Session-end analysis error: %s", e)
+
         self.logger.info("EchoMate stopped.")
         print("EchoMate stopped.")
 
@@ -288,13 +405,44 @@ class EchoMate:
                 silence        = now - self._last_speech_time
                 since_last_pro = now - self._last_proactive_time
                 if silence >= self.SILENCE_THRESHOLD and since_last_pro >= self.PROACTIVE_COOLDOWN:
+                    # tension が高い（戦闘中）場合は空気を読んで発言しない
+                    _state_check = self.state_manager.get_state()
+                    _tension = _state_check.to_dict().get("tension", 0.0) if hasattr(_state_check, "to_dict") else 0.0
+                    if _tension > 0.6:
+                        self.logger.debug("Proactive skipped: tension too high (%.2f)", _tension)
+                        continue
+
                     self.logger.info("Silence %.0fs — triggering proactive message", silence)
-                    memory  = self.event_manager.get_memory()
-                    state   = self.state_manager.get_state()
-                    message = self.ai.get_proactive_message(memory, state)
+                    memory = self.event_manager.get_memory()
+                    state  = self.state_manager.get_state()
+
+                    # 画面状況をAIに注入
+                    if self.vision_analyzer:
+                        self.ai.set_vision_context(self.vision_analyzer.get_context())
+
+                    # 成長観察ヒントを低頻度で注入
+                    growth_hint = None
+                    if self.observer.should_show_growth_hint():
+                        growth_hint = self.observer.get_growth_hint_message()
+
+                    message = self.ai.get_proactive_message(memory, state, growth_hint=growth_hint)
+
+                    # 安全フィルター
+                    tension      = state.to_dict().get("tension", 0.0) if hasattr(state, "to_dict") else 0.0
+                    stress_score = self.observer.estimate_stress(tension)
+                    message      = self.observer.filter_response(message, stress_score)
+
                     print(f"\n[EchoMate→] {message}")
                     self._last_proactive_time = now
                     self._speak_async(message)
+
+                    # ログ記録
+                    self._log_interaction(
+                        event_type="proactive",
+                        ai_response=message,
+                        tags=["proactive"],
+                        emotion_score=0.0,
+                    )
             except Exception as e:
                 self.logger.error("ProactiveChat error: %s", e)
 
@@ -323,12 +471,71 @@ class EchoMate:
         if not player_text:
             return
 
+        # Task3: プレイヤーが話し始めたら現在のAI音声を即座に停止（Barge-in）
+        self.voice_output.stop()
+
+        # ── 雑音・相槌のフィルタリング処理 ──
+        # 空白や句読点といった記号を除去し、純粋なテキストを抽出
+        clean_text = re.sub(r'[、。！？\s]', '', player_text)
+
+        # 除外する相槌のリスト
+        ignore_words = {"ん", "うん", "は", "あ", "え","はっ","はっは","はっはっ","はっはっは", "あー", "えー", "ふふ", "あはは", "ははは", "ふーん", "ええ", "おう", "んー", "はは", "なるほど", "そっか"}
+
+        def _get_repeating_unit(text: str) -> str:
+            """'ははははは' → 'は' のように最小繰り返し単位を返す"""
+            n = len(text)
+            for size in range(1, n // 2 + 1):
+                if n % size == 0 and text[:size] * (n // size) == text:
+                    return text[:size]
+            return text
+
+        def _matches_ignore(text: str) -> bool:
+            if text in ignore_words:
+                return True
+            if re.fullmatch(r'[あはひふへほっ]+', text):
+                return True
+            unit = _get_repeating_unit(text)
+            return unit != text and unit in ignore_words
+
+        # 実質1文字以下の文字列、または無視リストに一致する場合はスルー
+        if len(clean_text) <= 1 or _matches_ignore(clean_text):
+            self.logger.info("Ignored short/filler speech: %s", player_text)
+            return
+        # ────────────────────────────
+
         self._last_speech_time = time.time()
         self.logger.info("Player speech: %s", player_text)
 
-        memory   = self.event_manager.get_memory()
-        state    = self.state_manager.get_state()
-        response = self.ai.get_response(player_text, memory, state)
+        # プレイヤーが話し始めたらミニ会話の続きをキャンセル（空気を読む）
+        self.mini_conv.cancel_all()
+
+        memory = self.event_manager.get_memory()
+        state  = self.state_manager.get_state()
+
+        # 画面状況をAIに注入
+        if self.vision_analyzer:
+            self.ai.set_vision_context(self.vision_analyzer.get_context())
+
+        # 成長観察ヒントを低頻度で注入
+        growth_hint = None
+        if self.observer.should_show_growth_hint():
+            growth_hint = self.observer.get_growth_hint_message()
+
+        # Task2: フィラー先行非同期再生（LLM生成遅延を自然に見せる）
+        if len(clean_text) >= 10 and random.random() < 0.3:
+            self._speak_async(random.choice(["うーん…", "あー、", "なるほど…"]))
+
+        sentiment = analyze_sentiment(player_text)
+        response = self.ai.get_response(
+            player_text, memory, state,
+            growth_hint=growth_hint,
+            sentiment_context=sentiment.to_prompt_string(),
+        )
+
+        # 安全フィルター（ObserverModule）
+        tension      = state.to_dict().get("tension", 0.0) if hasattr(state, "to_dict") else 0.0
+        stress_score = self.observer.estimate_stress(tension)
+        response     = self.observer.filter_response(response, stress_score)
 
         print(f"\n{'─' * 40}")
         print(f"[Player]   {player_text}")
@@ -338,14 +545,86 @@ class EchoMate:
         self.event_manager.update_memory("player_speech", player_text)
         self._speak_async(response)
 
+        # ログ記録（PatronDB）
+        self._log_interaction(
+            event_type="player_speech",
+            ai_response=response,
+            user_input=player_text,
+            tags=["speech"],
+            emotion_score=0.0,
+        )
+
+    # ログ記録とバッチ分析トリガーの共通処理
+    _EMOTION_SCORE_MAP: dict = {
+        "kill":     0.3,
+        "big_play": 0.4,
+        "death":   -0.3,
+        "low_hp":  -0.2,
+    }
+    _TAGS_MAP: dict = {
+        "kill":     ["game", "kill"],
+        "death":    ["game", "death"],
+        "low_hp":   ["game", "danger"],
+        "big_play": ["game", "achievement"],
+        "player_speech": ["speech"],
+    }
+
+    def _log_interaction(
+        self,
+        event_type: str,
+        ai_response: str,
+        user_input: Optional[str] = None,
+        tags: Optional[list] = None,
+        emotion_score: float = 0.0,
+    ) -> None:
+        """PatronDB にログを記録し、必要ならバッチ分析をトリガーする"""
+        try:
+            self.patron_db.add_log(
+                event_type=event_type,
+                ai_response=ai_response,
+                user_input=user_input,
+                tags=tags or self._TAGS_MAP.get(event_type, ["game"]),
+                emotion_score=emotion_score,
+            )
+            if self.patron_db.should_trigger_analysis():
+                self.logger.info("Batch analysis triggered (%d unanalyzed logs)",
+                                 self.patron_db.count_unanalyzed())
+                self.analyzer.analyze_async()
+        except Exception as e:
+            self.logger.error("PatronDB log error: %s", e)
+
     def _handle_game_event(self, event: GameEvent) -> None:
+        now = time.time()
+        last = self._event_cooldowns.get(event.event_type, 0.0)
+        if now - last < self.EVENT_COOLDOWN_SEC:
+            self.logger.debug(
+                "Event '%s' skipped: cooldown (%.1fs remaining)",
+                event.event_type,
+                self.EVENT_COOLDOWN_SEC - (now - last),
+            )
+            return
+        self._event_cooldowns[event.event_type] = now
+
         self.logger.info("Game event: %s", event.event_type)
 
         # 状態を更新
         state = self.state_manager.update(event.event_type)
 
+        # 親密度加算（ポジティブなイベント）
+        if event.event_type in ("kill", "big_play"):
+            self.user_profile.add_bond(0.01)
+
+        # デス記録（ストレス推定に使用）
+        if event.event_type == "death":
+            self.observer.record_death()
+
         # step1: 即時リアクション
-        reaction = self.ai.get_reaction(event.event_type, state, use_template=True)
+        reaction = self.ai.get_reaction(event.event_type, state, use_template=False)
+
+        # 安全フィルター
+        tension      = state.to_dict().get("tension", 0.0) if hasattr(state, "to_dict") else 0.0
+        stress_score = self.observer.estimate_stress(tension)
+        reaction     = self.observer.filter_response(reaction, stress_score)
 
         label = {
             "kill": "KILL", "death": "DEATH",
@@ -365,9 +644,56 @@ class EchoMate:
         memory = self.event_manager.get_memory()
         self.mini_conv.start(event, state.to_dict(), memory)
 
+        # ログ記録（PatronDB）
+        self._log_interaction(
+            event_type=event.event_type,
+            ai_response=reaction,
+            emotion_score=self._EMOTION_SCORE_MAP.get(event.event_type, 0.0),
+        )
+
     # ------------------------------------------------------------------
     # ユーティリティ
     # ------------------------------------------------------------------
+
+    def _on_audio_spike(self, event_type: str, rms: float, spike: float) -> None:
+        """
+        音スパイク検知時にVLMで画面確認し、イベントを判定して発火する。
+        AudioDetector の vision_trigger_fn として登録される。
+        VLM呼び出しは別スレッドで非同期実行するので音声キャプチャを止めない。
+        """
+        self.logger.debug(
+            "Audio spike received (hint=%s, rms=%.3f, spike=%.3f) — checking screen",
+            event_type, rms, spike,
+        )
+
+        def _check() -> None:
+            try:
+                result = self.vision_analyzer.analyze_now(VISION_EVENT_PROMPT)
+                if not result:
+                    # VLM が完全失敗 → 話題フォールバックで沈黙を防ぐ
+                    if self.vision_analyzer.should_use_topic_fallback():
+                        fallback = self.vision_analyzer.get_fallback_topic()
+                        self.logger.info("VLM unavailable — using topic fallback: %s", fallback)
+                        self._speak_async(fallback)
+                    return
+                upper = result.strip().upper()
+                if "KILL" in upper:
+                    detected = "kill"
+                elif "LOW_HP" in upper or "LOW HP" in upper:
+                    detected = "low_hp"
+                elif "BIG_PLAY" in upper or "BIG PLAY" in upper:
+                    detected = "big_play"
+                else:
+                    self.logger.debug("Vision: no event confirmed (raw=%s)", result[:60])
+                    return
+                self.logger.info("Vision confirmed event: %s (rms=%.3f)", detected, rms)
+                self.event_manager.add_event(
+                    GameEvent(detected, {"source": "audio+vision", "rms": round(rms, 4)})
+                )
+            except Exception as e:
+                self.logger.error("Audio spike vision check error: %s", e)
+
+        threading.Thread(target=_check, daemon=True, name="VisionCheck").start()
 
     def _speak_async(self, text: str) -> None:
         # GUI 吹き出し UI へテキストを通知する
@@ -376,9 +702,36 @@ class EchoMate:
                 self._speech_callback(text)
             except Exception as e:
                 self.logger.debug("speech_callback error: %s", e)
+
+        # Task5: 感情別VOICEVOXスピーカー選択
+        voicevox_cfg = self.ai.current_character.get("voicevox", {})
+        emotion_speakers = voicevox_cfg.get("emotion_speakers", {})
+        normal_id = voicevox_cfg.get("speaker_id")
+        speaker_id = normal_id
+
+        if emotion_speakers and normal_id is not None:
+            try:
+                state = self.state_manager.get_state()
+                tension = state.to_dict().get("tension", 0.5) if hasattr(state, "to_dict") else 0.5
+            except Exception:
+                tension = 0.5
+            if tension >= 0.6:
+                speaker_id = emotion_speakers.get("high", normal_id)
+            elif tension <= 0.3:
+                speaker_id = emotion_speakers.get("low", normal_id)
+            else:
+                speaker_id = emotion_speakers.get("normal", normal_id)
+
+        def _speak_with_emotion() -> None:
+            if speaker_id is not None and speaker_id != self.voice_output.speaker_id:
+                self.voice_output.set_speaker(speaker_id)
+            self.voice_output.speak(text)
+            # 再生完了後にnormal IDへ戻す
+            if normal_id is not None and self.voice_output.speaker_id != normal_id:
+                self.voice_output.set_speaker(normal_id)
+
         threading.Thread(
-            target=self.voice_output.speak,
-            args=(text,),
+            target=_speak_with_emotion,
             daemon=True,
             name="VoiceOutput",
         ).start()

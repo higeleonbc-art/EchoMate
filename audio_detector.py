@@ -26,10 +26,16 @@ import json
 import numpy as np
 
 try:
-    import pyaudio
-    _PYAUDIO_AVAILABLE = True
+    import pyaudiowpatch as pyaudio   # WASAPI ループバック対応版を優先
+    _PYAUDIO_AVAILABLE   = True
+    _WPATCH_AVAILABLE    = True
 except ImportError:
-    _PYAUDIO_AVAILABLE = False
+    _WPATCH_AVAILABLE = False
+    try:
+        import pyaudio
+        _PYAUDIO_AVAILABLE = True
+    except ImportError:
+        _PYAUDIO_AVAILABLE = False
 
 from event import EventManager, GameEvent
 
@@ -41,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 CHUNK       = 1024          # 1 チャンクのサンプル数
 CHANNELS    = 1             # モノラル
-RATE        = 44100         # サンプリングレート（Hz）
+RATE        = 44100         # サンプリングレートのフォールバック値（Hz）
 
 # 動的ベースラインの指数移動平均係数
 # 小さいほどゆっくり適応（= 急変に敏感）
@@ -70,8 +76,13 @@ class AudioDetector:
         self,
         event_manager: EventManager,
         config_path: str = "cv_config.json",
+        device_index: int | None = None,
+        vision_trigger_fn=None,   # Callable[[str, float, float], None] | None
     ) -> None:
         self.event_manager = event_manager
+        self.device_index = device_index
+        self.vision_trigger_fn = vision_trigger_fn  # 設定時は音スパイクをVisionに委譲
+        self.current_rms: float = 0.0
         self.running = False
         self._thread: threading.Thread | None = None
         self._last_fired: dict[str, float] = {}
@@ -139,19 +150,33 @@ class AudioDetector:
     # 音声ループ
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _resolve_rate(p: "pyaudio.PyAudio", device_index: int | None) -> int:
+        """デバイスのネイティブサンプルレートを返す。取得できなければ RATE を使用。"""
+        if device_index is None:
+            return RATE
+        try:
+            info = p.get_device_info_by_index(device_index)
+            return int(info.get("defaultSampleRate", RATE))
+        except Exception:
+            return RATE
+
     def _audio_loop(self) -> None:
-        """マイクから連続取得してRMSを評価するメインループ"""
+        """マイクまたはループバックデバイスから連続取得してRMSを評価するメインループ"""
         p = pyaudio.PyAudio()
         stream = None
         try:
+            rate = self._resolve_rate(p, self.device_index)
             stream = p.open(
                 format=pyaudio.paFloat32,
                 channels=CHANNELS,
-                rate=RATE,
+                rate=rate,
                 input=True,
                 frames_per_buffer=CHUNK,
+                input_device_index=self.device_index,
             )
-            logger.info("Audio stream opened (rate=%d, chunk=%d)", RATE, CHUNK)
+            logger.info("Audio stream opened (device=%s, rate=%d, chunk=%d)",
+                        self.device_index, rate, CHUNK)
 
             # 動的ベースライン（環境音に適応）
             baseline = 0.0
@@ -162,6 +187,7 @@ class AudioDetector:
                     raw = stream.read(CHUNK, exception_on_overflow=False)
                     samples = np.frombuffer(raw, dtype=np.float32)
                     rms = float(np.sqrt(np.mean(samples ** 2)))
+                    self.current_rms = rms
 
                     # ベースラインを指数移動平均で更新
                     baseline = EMA_ALPHA * rms + (1.0 - EMA_ALPHA) * baseline
@@ -187,6 +213,7 @@ class AudioDetector:
         except Exception as e:
             logger.error("AudioDetector fatal error: %s", e)
         finally:
+            self.current_rms = 0.0
             if stream:
                 stream.stop_stream()
                 stream.close()
@@ -205,12 +232,23 @@ class AudioDetector:
             return
 
         self._last_fired[rule["name"]] = now
-        event = GameEvent(
-            rule["event_type"],
-            {"source": "audio", "rms": round(rms, 4), "spike": round(spike, 4)},
-        )
-        self.event_manager.add_event(event)
-        logger.info(
-            "Audio event fired: %s (rule=%s, rms=%.3f, spike=%.3f)",
-            rule["event_type"], rule["name"], rms, spike,
-        )
+        event_type = rule["event_type"]
+
+        if self.vision_trigger_fn is not None:
+            # Vision確認を経てイベント発火（非同期・VLMが判定）
+            self.vision_trigger_fn(event_type, rms, spike)
+            logger.info(
+                "Audio spike → vision trigger called (rule=%s, rms=%.3f, spike=%.3f)",
+                rule["name"], rms, spike,
+            )
+        else:
+            # 従来の直接発火
+            event = GameEvent(
+                event_type,
+                {"source": "audio", "rms": round(rms, 4), "spike": round(spike, 4)},
+            )
+            self.event_manager.add_event(event)
+            logger.info(
+                "Audio event fired: %s (rule=%s, rms=%.3f, spike=%.3f)",
+                event_type, rule["name"], rms, spike,
+            )

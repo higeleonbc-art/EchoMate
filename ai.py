@@ -10,25 +10,38 @@ ai.py - AI処理モジュール
   - validate_response: 文字列検証可能な制約をコードで強制（max 3 retry）
   - get_followup: ミニ会話の step2 / step3 用メソッド
   - Ollama API: system パラメータでキャラクターの system_prompt を分離
+
+主な変更点（v3 - 良き隣人システム）:
+  - UserProfile をオプションで受け取り、全プロンプトにRAG注入
+  - set_user_profile(): 外部からプロファイルを差し込める
+  - 成長観察ヒントのプロンプト内注入サポート
 """
 
 import json
 import logging
+import os
 import time
 import random
 import re
+from typing import Optional
 
-import requests
+import httpx
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# 定数
+# 定数（.env で上書き可能）
 # ---------------------------------------------------------------------------
 
-OLLAMA_MODEL      = "gemma2:2b"
-OLLAMA_API_URL    = "http://localhost:11434/api/generate"
-OLLAMA_TIMEOUT    = 10
+OLLAMA_MODEL      = os.environ.get("LLM_MODEL", "qwen3:8b")
+OLLAMA_API_URL    = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/generate")
+OLLAMA_TIMEOUT    = int(os.environ.get("OLLAMA_TIMEOUT", "10"))
 OLLAMA_NUM_PREDICT = 60
 
 MAX_VALIDATE_RETRY = 3   # validate_response 失敗時の最大再生成回数
@@ -79,8 +92,24 @@ class AICompanion:
         self._conversation_history: list[dict[str, str]] = []
         self._characters: dict = {}
         self.current_character: dict = {}
+        self._user_profile: Optional[object] = None   # UserProfile（良き隣人システム）
+        self._vision_context: str = ""                # 最新の画面解析結果（VisionAnalyzer）
+        self._thinking_callback: Optional[object] = None  # (is_thinking: bool) -> None
         self._load_characters()
         self.set_character(DEFAULT_CHARACTER)
+
+    def set_thinking_callback(self, callback) -> None:
+        """LLM 呼び出し開始/終了時に呼ばれるコールバックを登録する。
+        callback(is_thinking: bool) の形式。GUI インジケーター用。"""
+        self._thinking_callback = callback
+
+    def set_user_profile(self, profile: object) -> None:
+        """UserProfile インスタンスを設定する（良き隣人システム連携用）"""
+        self._user_profile = profile
+
+    def set_vision_context(self, context: str) -> None:
+        """最新の画面解析テキストを設定する（VisionAnalyzer連携用）"""
+        self._vision_context = context
 
     # ------------------------------------------------------------------
     # キャラクター管理
@@ -134,25 +163,42 @@ class AICompanion:
         prompt = (
             f"イベント「{event_type}」が発生した。\n"
             f"現在の状態:\n{state_ctx}\n\n"
+            "【重要】状況を説明するのではなく、状況を踏まえてプレイヤーに対し感情的にリアクションしてください。\n"
             "1文・最大15文字で感情的なリアクションをしてください。"
         )
         return self._call_with_validation(prompt, max_chars=15)
 
-    def get_response(self, player_input: str, memory: dict, state=None) -> str:
+    def get_response(
+        self,
+        player_input: str,
+        memory: dict,
+        state=None,
+        growth_hint: Optional[str] = None,
+        sentiment_context: Optional[str] = None,
+    ) -> str:
         """プレイヤー発言に対する会話応答を返す"""
         memory_ctx  = self._build_memory_context(memory)
         history_ctx = self._build_history_context()
         state_ctx   = state.summary() if state else "（状態情報なし）"
 
+        sentiment_line = f"{sentiment_context}\n" if sentiment_context else ""
         prompt = (
             f"{memory_ctx}\n\n"
             f"現在の状態:\n{state_ctx}\n\n"
             f"{history_ctx}\n"
+            f"{sentiment_line}"
             f"プレイヤーの発言:「{player_input}」\n\n"
+            "【重要】状況を説明するのではなく、状況を踏まえてプレイヤーに対し感情的にリアクションしてください。\n"
             "ルール: 1〜2文・最大40文字・フランク・時々質問・日本語のみ\n"
             "返答:"
         )
-        response = self._call_with_validation(prompt, max_chars=40)
+
+        # Task1: テンションが低い時、30%の確率で話題を広げる質問を促す
+        tension = state.to_dict().get("tension", 0.0) if (state and hasattr(state, "to_dict")) else 0.0
+        if tension < 0.4 and random.random() < 0.3:
+            prompt += "\n※最後に、話題を広げるための短い質問や疑問をプレイヤーに投げかけてください"
+
+        response = self._call_with_validation(prompt, max_chars=40, growth_hint=growth_hint)
 
         self._conversation_history.append({"player": player_input, "ai": response})
         if len(self._conversation_history) > 10:
@@ -182,32 +228,103 @@ class AICompanion:
             f"テンション: {state_snapshot.get('tension', 0.5):.2f}"
         )
         step_instruction = FOLLOWUP_STEP_PROMPTS.get(step, "一言コメントしてください。")
+        memory_ctx = self._build_memory_context(memory)
 
         prompt = (
+            f"{memory_ctx}\n\n"
             f"直前のゲームイベント: {event_type}\n"
             f"状態:\n{state_ctx}\n\n"
+            "【重要】状況を説明するのではなく、状況を踏まえてプレイヤーに対し感情的にリアクションしてください。\n"
             f"{step_instruction}\n"
             "1文・最大30文字で返してください。\n"
             "返答:"
         )
         return self._call_with_validation(prompt, max_chars=30)
 
-    def get_proactive_message(self, memory: dict, state=None) -> str:
+    def get_proactive_message(
+        self,
+        memory: dict,
+        state=None,
+        growth_hint: Optional[str] = None,
+    ) -> str:
         """プレイヤーが無言のとき、自発的に話題を振るメッセージを返す"""
         memory_ctx = self._build_memory_context(memory)
         state_ctx  = state.summary() if state else ""
 
-        prompt = (
-            f"{memory_ctx}\n"
-            f"{state_ctx}\n\n"
-            "プレイヤーがしばらく無言です。自然に話題を振ってください。\n"
-            "ルール: 1文・最大30文字・フランク・質問かコメント\n"
-            "発言:"
-        )
-        return self._call_with_validation(prompt, max_chars=30)
+        # 親密度が高く過去エピソードがある場合、15%の確率で過去の出来事を話題にする
+        if self._user_profile is not None:
+            try:
+                bond = self._user_profile.get_bond_level()
+                episodes = self._user_profile.get_memorable_episodes()
+                if bond >= 0.5 and episodes and random.random() < 0.15:
+                    current_game = self._user_profile.get_current_game()
+                    if current_game:
+                        game_eps = [e for e in episodes if e.get("game") == current_game]
+                        ep = random.choice(game_eps) if game_eps else random.choice(episodes)
+                    else:
+                        ep = random.choice(episodes)
+                    ep_text = ep.get("text", "")
+                    ep_game = ep.get("game", "")
+                    game_note = f"（{ep_game}での出来事）" if ep_game else ""
+                    prompt = (
+                        f"{memory_ctx}\n"
+                        f"{state_ctx}\n\n"
+                        f"過去の印象的な出来事{game_note}:「{ep_text}」\n"
+                        "この出来事を自然に蒸し返して、「そういえばあの時の…」のように話題を出してください。\n"
+                        "ルール: 1文・最大35文字・フランク\n"
+                        "発言:"
+                    )
+                    return self._call_with_validation(prompt, max_chars=35, growth_hint=growth_hint)
+            except Exception:
+                pass
+
+        # Task4: 過去の話題が存在する場合、40%の確率で蒸し返す
+        recent_topics = memory.get("recent_topics", [])
+        if recent_topics and random.random() < 0.4:
+            prompt = (
+                f"{memory_ctx}\n"
+                f"{state_ctx}\n\n"
+                "直近の会話内容（recent_topics）の中からひとつを選び、『そういえばさっきの件だけど…』と後追いのコメントや質問を投げてください。状況説明は不要です。\n"
+                "ルール: 1文・最大30文字・フランク\n"
+                "発言:"
+            )
+        else:
+            prompt = (
+                f"{memory_ctx}\n"
+                f"{state_ctx}\n\n"
+                "プレイヤーがしばらく無言です。自然に話題を振ってください。\n"
+                "【重要】状況を説明するのではなく、状況を踏まえてプレイヤーに対し感情的にリアクションしてください。\n"
+                "ルール: 1文・最大30文字・フランク・質問かコメント\n"
+                "発言:"
+            )
+        return self._call_with_validation(prompt, max_chars=30, growth_hint=growth_hint)
 
     def get_tendency_label(self, event_type: str) -> str | None:
         return TENDENCY_MAP.get(event_type)
+
+    def get_game_change_greeting(self, old_game: str, new_game: str) -> str:
+        """
+        ゲームが変わった際のメタ的な挨拶文を生成する。
+        「前回は〇〇だったけど今日は××だね！」のように自然につなぐ。
+        """
+        if old_game and new_game:
+            prompt = (
+                f"前回は「{old_game}」をプレイしていたが、今日は「{new_game}」に変わった。\n"
+                "ゲームが変わったことを自然に触れながら、今日のプレイへの期待感を込めた挨拶を言ってください。\n"
+                "ルール: 1〜2文・最大50文字・フランク・明るいトーン\n"
+                "発言:"
+            )
+        elif new_game:
+            prompt = (
+                f"今日は「{new_game}」をプレイするんだね。\n"
+                "軽くテンション上げる挨拶を言ってください。\n"
+                "ルール: 1文・最大40文字・フランク\n"
+                "発言:"
+            )
+        else:
+            return random.choice(PROACTIVE_TEMPLATES)
+
+        return self._call_with_validation(prompt, max_chars=50)
 
     # ------------------------------------------------------------------
     # バリデーション
@@ -249,20 +366,117 @@ class AICompanion:
     # プライベートメソッド
     # ------------------------------------------------------------------
 
-    def _call_with_validation(self, prompt: str, max_chars: int = 40) -> str:
+    def _build_profile_context(self) -> str:
+        """UserProfile からRAGコンテキストを生成する（プロファイル未設定なら空文字）"""
+        if self._user_profile is None:
+            return ""
+        try:
+            basic = self._user_profile.get_summary_for_prompt()
+            growth = self._user_profile.get_growth_summary_for_prompt()
+            context_summary = self._user_profile.get_context_summary()
+            parts = [p for p in [basic, growth] if p]
+            if context_summary:
+                parts.append(f"【最近の文脈】{context_summary}")
+            return "\n".join(parts)
+        except Exception:
+            return ""
+
+    def _build_game_knowledge_context(self) -> str:
+        """game_knowledge.json から学習済みゲーム知識をRAG注入用テキストとして返す（Task6d）"""
+        try:
+            with open("game_knowledge.json", encoding="utf-8") as f:
+                knowledge = json.load(f)
+            if not knowledge:
+                return ""
+            lines = [f"- {word}: {desc}" for word, desc in list(knowledge.items())[:20]]
+            return "【学習したゲーム知識】\n" + "\n".join(lines)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return ""
+
+    def _call_with_validation(
+        self,
+        prompt: str,
+        max_chars: int = 40,
+        growth_hint: Optional[str] = None,
+    ) -> str:
         """
         LLM を呼び出し、validate_response が通るまで最大 MAX_VALIDATE_RETRY 回リトライする。
         すべて失敗した場合はフォールバック文字列を返す。
+
+        Args:
+            prompt:      ユーザー向けプロンプト本文
+            max_chars:   応答の最大文字数
+            growth_hint: 成長観察ヒント（Noneなら注入しない）
         """
         system_prompt = self.current_character.get("system_prompt", "")
         rules_text = ""
         if self.current_character.get("rules"):
             rules_text = "ルール:\n" + "\n".join(f"- {r}" for r in self.current_character["rules"])
 
-        full_prompt = f"{rules_text}\n\n{prompt}" if rules_text else prompt
+        # bond_level が高い場合、大親友ルールを動的注入
+        if self._user_profile is not None:
+            try:
+                bond = self._user_profile.get_bond_level()
+                if bond >= 0.7:
+                    friend_rule = "【最重要】あなたはこのプレイヤーの大親友です。極めてフランクに、遠慮なく、親しみを込めて話してください。"
+                    system_prompt = f"{friend_rule}\n{system_prompt}" if system_prompt else friend_rule
+            except Exception:
+                pass
+
+        # ユーザープロファイルを先頭に注入（RAG）
+        profile_ctx = self._build_profile_context()
+        game_knowledge_ctx = self._build_game_knowledge_context()
+        prefix_parts = []
+        if profile_ctx:
+            prefix_parts.append(profile_ctx)
+        if game_knowledge_ctx:
+            prefix_parts.append(game_knowledge_ctx)
+        if self._vision_context:
+            prefix_parts.append(f"【画面状況】{self._vision_context}")
+        if growth_hint:
+            prefix_parts.append(f"（観察メモ: {growth_hint}）")
+        prefix = "\n".join(prefix_parts)
+
+        # キャラクター制約を動的にプロンプトへ注入
+        constraints = self.current_character.get("constraints", {})
+        if constraints:
+            constraint_lines = []
+            if "must_start" in constraints:
+                constraint_lines.append(f"必ず次のいずれかの言葉で書き始めてください: {', '.join(constraints['must_start'])}")
+            if "forbidden" in constraints:
+                constraint_lines.append(f"以下の言葉は絶対に使わないでください: {', '.join(constraints['forbidden'])}")
+            if "must_include" in constraints:
+                constraint_lines.append(f"以下の言葉のいずれかを必ず含めてください: {', '.join(constraints['must_include'])}")
+            if constraints.get("no_exclamation"):
+                constraint_lines.append("「！」（感嘆符）は絶対に使わないでください。")
+            if "must_sequence" in constraints:
+                constraint_lines.append(f"次の順番で内容を構成してください: {' -> '.join(constraints['must_sequence'])}")
+            if constraints.get("must_include_advice"):
+                constraint_lines.append("必ずプレイヤーへの具体的な助言や行動指示を含めてください。")
+            
+            if constraint_lines:
+                c_text = "【制約事項】\n" + "\n".join(f"- {c}" for c in constraint_lines)
+                rules_text = f"{rules_text}\n\n{c_text}" if rules_text else c_text
+
+        base_prompt = f"{rules_text}\n\n{prompt}" if rules_text else prompt
+        full_prompt  = f"{prefix}\n\n{base_prompt}" if prefix else base_prompt
+
+        # プレイスタイルに応じたトーン補正
+        if self._user_profile is not None:
+            try:
+                labels = self._user_profile.get().get("playstyle_labels", [])
+                tone_hints = []
+                if "ゴリ押し" in labels:
+                    tone_hints.append("もっとイケイケな口調で応援しろ")
+                if "慎重" in labels:
+                    tone_hints.append("一歩引いた視点で分析しろ")
+                if tone_hints:
+                    full_prompt = f"【トーン指示: {' / '.join(tone_hints)}】\n{full_prompt}"
+            except Exception:
+                pass
 
         for attempt in range(1, MAX_VALIDATE_RETRY + 1):
-            raw = self._call_ollama(full_prompt, system_prompt, max_chars)
+            raw = self._call_ollama(full_prompt, system_prompt, max_chars)  # type: ignore[arg-type]
             if self.validate_response(raw):
                 if attempt > 1:
                     logger.debug("Validation passed on attempt %d", attempt)
@@ -274,6 +488,11 @@ class AICompanion:
 
     def _call_ollama(self, prompt: str, system_prompt: str, max_chars: int) -> str:
         """Ollama HTTP API を呼び出す。system パラメータでキャラクターを注入。"""
+        if self._thinking_callback:
+            try:
+                self._thinking_callback(True)
+            except Exception:
+                pass
         start = time.time()
         try:
             payload: dict = {
@@ -289,7 +508,7 @@ class AICompanion:
             if system_prompt:
                 payload["system"] = system_prompt
 
-            res = requests.post(OLLAMA_API_URL, json=payload, timeout=OLLAMA_TIMEOUT)
+            res = httpx.post(OLLAMA_API_URL, json=payload, timeout=OLLAMA_TIMEOUT)
             elapsed = time.time() - start
             logger.debug("Ollama responded in %.2fs", elapsed)
 
@@ -300,15 +519,21 @@ class AICompanion:
             raw = res.json().get("response", "")
             return self._clean(raw, max_chars)
 
-        except requests.exceptions.ConnectionError:
+        except httpx.ConnectError:
             logger.error("Ollama not running at %s", OLLAMA_API_URL)
             return "（AI未接続）"
-        except requests.exceptions.Timeout:
+        except httpx.TimeoutException:
             logger.warning("Ollama timed out after %ds", OLLAMA_TIMEOUT)
             return "ちょっと待って"
         except Exception as e:
             logger.error("Ollama error: %s", e)
             return random.choice(FALLBACK_RESPONSES)
+        finally:
+            if self._thinking_callback:
+                try:
+                    self._thinking_callback(False)
+                except Exception:
+                    pass
 
     @staticmethod
     def _clean(raw: str, max_chars: int) -> str:

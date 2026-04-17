@@ -5,16 +5,20 @@
 faster-whisper>=1.0.0
 
 # HTTP クライアント（VOICEVOX API + Ollama HTTP API）
-requests>=2.31.0
+# requests から httpx へ移行（非同期化への布石・タイムアウト管理厳格化）
+httpx>=0.27.0
+
+# 環境変数管理（.env でモデル名・API URL を一括管理）
+python-dotenv>=1.0.0
 
 # 数値計算（VAD・RMS 計算）
 numpy>=1.24.0
 
-# 音声入出力（pyaudio はバイナリ依存あり）
-# Windows: pip install pyaudio
-# Linux:   sudo apt install portaudio19-dev && pip install pyaudio
-# macOS:   brew install portaudio && pip install pyaudio
-pyaudio>=0.2.14
+# 音声入出力（WASAPI ループバック対応版を優先）
+# Windows: pip install pyaudiowpatch
+# Linux / macOS: pip install pyaudio
+pyaudiowpatch>=0.2.12.6; sys_platform == "win32"
+pyaudio>=0.2.14; sys_platform != "win32"
 
 # ── OpenCV 画面検出（任意）────────────────────────────────────
 # pip install opencv-python mss numpy
@@ -23,7 +27,7 @@ mss>=9.0.1
 
 # ── セットアップウィザード（Windows のみ）───────────────────
 # pip install pywin32
-pywin32>=306
+pywin32>=306; sys_platform == "win32"
 
 # ── GUI（gui.py）────────────────────────────────────────────
 # プロセス列挙
