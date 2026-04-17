@@ -11,7 +11,7 @@
       "event_type": "low_hp",
       "method": "color_threshold",
       "params": { "color": "green", "threshold": 0.20, "operator": "le" },
-      "cooldown": 6.0,
+      "cooldown": 10.0,
       "min_hits": 3,
       "enabled": true
     },
@@ -23,7 +23,7 @@
       "event_type": "kill",
       "method": "color_threshold",
       "params": { "color": "yellow", "threshold": 0.04 },
-      "cooldown": 4.0,
+      "cooldown": 8.0,
       "min_hits": 2,
       "enabled": true
     },
@@ -47,7 +47,7 @@
       "event_type": "big_play",
       "method": "color_threshold",
       "params": { "color": "yellow", "threshold": 0.05 },
-      "cooldown": 5.0,
+      "cooldown": 10.0,
       "min_hits": 2,
       "enabled": true
     },
@@ -85,7 +85,7 @@
       "name": "lol_combat_spike",
       "event_type": "big_play",
       "threshold": 0.12,
-      "cooldown": 3.0,
+      "cooldown": 5.0,
       "enabled": true
     },
 
@@ -94,7 +94,7 @@
       "name": "lol_big_spike",
       "event_type": "big_play",
       "threshold": 0.26,
-      "cooldown": 5.0,
+      "cooldown": 8.0,
       "enabled": true
     },
 

@@ -384,6 +384,22 @@ class ServiceManager:
     def stop_voicevox(cls) -> None:
         cls.terminate_process_by_name("VOICEVOX.exe")
 
+    @staticmethod
+    def get_voicevox_pids() -> list[int]:
+        """実行中の VOICEVOX エンジン関連プロセスの PID リストを返す。"""
+        targets = {"voicevox.exe", "run.exe"}  # VOICEVOX 本体 + 内蔵エンジン
+        pids: list[int] = []
+        if not _PSUTIL:
+            return pids
+        try:
+            for proc in psutil.process_iter(["name", "pid"]):
+                name = (proc.info["name"] or "").lower()
+                if name in targets:
+                    pids.append(proc.info["pid"])
+        except Exception:
+            pass
+        return pids
+
     @classmethod
     def stop_ollama(cls) -> None:
         cls.terminate_process_by_name("ollama.exe")
@@ -686,6 +702,22 @@ class GameSetupFrame(ttk.Frame):
         """選択中のモニターインデックスを返す（mss 番号: 1=プライマリ）"""
         sel = self._monitor_combo.current()
         return max(1, sel + 1)  # combobox は 0-origin なので +1
+
+    def get_selected_pid(self) -> Optional[int]:
+        """プロセスリストで選択中の EXE の PID を返す。未選択・取得失敗時は None。"""
+        sel = self._proc_list.curselection()
+        if not sel:
+            return None
+        exe = self._proc_list.get(sel[0])
+        if not _PSUTIL:
+            return None
+        try:
+            for proc in psutil.process_iter(["name", "pid"]):
+                if proc.info["name"] and proc.info["name"].lower() == exe.lower():
+                    return proc.info["pid"]
+        except Exception:
+            pass
+        return None
 
     # ── プロセスリスト ────────────────────────────────────────────────────────
 
@@ -1757,10 +1789,12 @@ class EchoMateGUI:
             # 3. EchoMate 起動
             self.root.after(0, self._status_var.set, "EchoMate を起動中...")
             try:
-                char_key      = self._char_tab.get_selected()
-                voice_device  = self._mic_tab.get_voice_input_device()
-                detect_device = self._mic_tab.get_audio_detect_device()
-                monitor_idx   = self._game_tab.get_monitor_index()
+                char_key       = self._char_tab.get_selected()
+                voice_device   = self._mic_tab.get_voice_input_device()
+                detect_device  = self._mic_tab.get_audio_detect_device()
+                monitor_idx    = self._game_tab.get_monitor_index()
+                target_pid     = self._game_tab.get_selected_pid()
+                exclude_pids   = ServiceManager.get_voicevox_pids()
                 self._echo_mate = EchoMate(
                     character=char_key,
                     enable_cv=True,
@@ -1770,6 +1804,8 @@ class EchoMateGUI:
                     voice_input_device=voice_device,
                     audio_detect_device=detect_device,
                     vision_monitor_index=monitor_idx,
+                    audio_target_pid=target_pid,
+                    audio_exclude_pids=exclude_pids or None,
                 )
                 self._echo_mate.start_background()
             except Exception as exc:

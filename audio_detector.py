@@ -77,11 +77,19 @@ class AudioDetector:
         event_manager: EventManager,
         config_path: str = "cv_config.json",
         device_index: int | None = None,
-        vision_trigger_fn=None,   # Callable[[str, float, float], None] | None
+        vision_trigger_fn=None,          # Callable[[str, float, float], None] | None
+        voice_output=None,               # VoiceOutput | None — フォールバックモードの自己応答防止用
+        target_pid: int | None = None,   # キャプチャ対象プロセスの PID
+        exclude_pids: list[int] | None = None,  # 除外 PID（VOICEVOX 等）
     ) -> None:
         self.event_manager = event_manager
         self.device_index = device_index
         self.vision_trigger_fn = vision_trigger_fn  # 設定時は音スパイクをVisionに委譲
+        self.voice_output = voice_output
+        self.target_pid = target_pid
+        self.exclude_pids = exclude_pids or []
+        # PID 指定なしはシステム全体取得（フォールバック）→ 自己応答防止ガード有効
+        self.is_fallback_mode: bool = (target_pid is None)
         self.current_rms: float = 0.0
         self.running = False
         self._thread: threading.Thread | None = None
@@ -163,6 +171,12 @@ class AudioDetector:
 
     def _audio_loop(self) -> None:
         """マイクまたはループバックデバイスから連続取得してRMSを評価するメインループ"""
+        from audio_capture_pro import is_available as is_pac_available
+        if is_pac_available() and (self.target_pid or self.exclude_pids):
+            self.is_fallback_mode = (self.target_pid is None)
+            self._audio_loop_pac()
+            return
+
         p = pyaudio.PyAudio()
         stream = None
         try:
@@ -197,6 +211,10 @@ class AudioDetector:
                     if frame_count < WARMUP_FRAMES:
                         continue
 
+                    # フォールバックモード: AI 発話中は自己ループを防ぐため判定を一時停止
+                    if self.is_fallback_mode and self.voice_output and self.voice_output.is_speaking:
+                        continue
+
                     # スパイク量（= ベースラインからの乖離）
                     spike = rms - baseline
                     logger.debug("RMS=%.4f baseline=%.4f spike=%.4f", rms, baseline, spike)
@@ -219,6 +237,49 @@ class AudioDetector:
                 stream.close()
             p.terminate()
             logger.info("Audio stream closed")
+
+    def _audio_loop_pac(self) -> None:
+        """process-audio-capture ラッパーを使ったキャプチャループ（PID 指定時）"""
+        from audio_capture_pro import AudioCaptureProWrapper
+        wrapper = AudioCaptureProWrapper(pid=self.target_pid)
+        wrapper.start()
+        logger.info(
+            "AudioDetector using PAC wrapper (target_pid=%s, fallback=%s)",
+            self.target_pid, self.is_fallback_mode,
+        )
+
+        baseline = 0.0
+        frame_count = 0
+
+        try:
+            while self.running:
+                rms = wrapper.read_rms()
+                if rms is None:
+                    continue
+
+                self.current_rms = rms
+                baseline = EMA_ALPHA * rms + (1.0 - EMA_ALPHA) * baseline
+                frame_count += 1
+
+                if frame_count < WARMUP_FRAMES:
+                    continue
+
+                if self.is_fallback_mode and self.voice_output and self.voice_output.is_speaking:
+                    continue
+
+                spike = rms - baseline
+                logger.debug("PAC RMS=%.4f baseline=%.4f spike=%.4f", rms, baseline, spike)
+
+                for rule in self.rules:
+                    if spike >= rule["threshold"]:
+                        self._fire_event(rule, rms, spike)
+
+        except Exception as e:
+            logger.error("AudioDetector PAC loop error: %s", e)
+        finally:
+            wrapper.stop()
+            self.current_rms = 0.0
+            logger.info("PAC audio loop closed")
 
     # ------------------------------------------------------------------
     # イベント発火

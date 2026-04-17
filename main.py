@@ -136,6 +136,11 @@ class MiniConversationManager:
         threading.Timer(self.STEP2_DELAY, self._fire_step, args=(event.id, 2)).start()
         threading.Timer(self.STEP3_DELAY, self._fire_step, args=(event.id, 3)).start()
 
+    def is_busy(self) -> bool:
+        """未処理のミニ会話ステップが残っている場合 True を返す（スロットリング用）"""
+        with self._lock:
+            return len(self._active) > 0
+
     def cancel_all(self) -> None:
         """全アクティブなミニ会話をキャンセルする（プレイヤーが集中し始めたら空気を読む）"""
         with self._lock:
@@ -177,8 +182,15 @@ class EchoMate:
     PROACTIVE_COOLDOWN        = 120.0
     PROACTIVE_CHECK_INTERVAL  = 5.0
     STATE_TICK_INTERVAL       = 3.0   # StateManager.tick() の呼び出し間隔（秒）
-    EVENT_COOLDOWN_SEC        = 3.0   # 同一イベントの重複発話を防ぐクールダウン（秒）
     PROACTIVE_VISION_INTERVAL = 20.0  # 自発的 VLM 解析の間隔（秒）
+    # イベント種別ごとのクールダウン（秒）。連続発生しやすい kill/death は短め
+    _EVENT_COOLDOWNS: dict = {
+        "kill":     5.0,
+        "death":    5.0,
+        "low_hp":  10.0,
+        "big_play": 10.0,
+    }
+    _EVENT_COOLDOWN_DEFAULT = 10.0
 
     def __init__(
         self,
@@ -191,6 +203,8 @@ class EchoMate:
         voice_input_device: Optional[int] = None,    # 音声認識用マイク
         audio_detect_device: Optional[int] = None,   # ゲームイベント検知用（ループバック可）
         vision_monitor_index: int = 1,               # Vision 解析対象モニター（1=プライマリ）
+        audio_target_pid: Optional[int] = None,      # 音声キャプチャ対象プロセス PID
+        audio_exclude_pids: Optional[list] = None,   # 音声キャプチャ除外 PID リスト
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
 
@@ -218,7 +232,7 @@ class EchoMate:
 
         # 検出器
         self.cv_detector    = OpenCVDetector(self.event_manager) if enable_cv    else None
-        self.audio_detector = AudioDetector(self.event_manager, device_index=audio_detect_device) if enable_audio else None
+        self.audio_detector = AudioDetector(self.event_manager, device_index=audio_detect_device, voice_output=self.voice_output, target_pid=audio_target_pid, exclude_pids=audio_exclude_pids) if enable_audio else None
         self.vision_analyzer = VisionAnalyzer(monitor_index=vision_monitor_index) if enable_vision else None
 
         # VisionAnalyzer と AudioDetector を音トリガー型で連携
@@ -637,15 +651,26 @@ class EchoMate:
 
     def _handle_game_event(self, event: GameEvent) -> None:
         now = time.time()
+        cooldown = self._EVENT_COOLDOWNS.get(event.event_type, self._EVENT_COOLDOWN_DEFAULT)
         last = self._event_cooldowns.get(event.event_type, 0.0)
-        if now - last < self.EVENT_COOLDOWN_SEC:
+        if now - last < cooldown:
             self.logger.debug(
                 "Event '%s' skipped: cooldown (%.1fs remaining)",
                 event.event_type,
-                self.EVENT_COOLDOWN_SEC - (now - last),
+                cooldown - (now - last),
             )
             return
         self._event_cooldowns[event.event_type] = now
+
+        # 中・低優先度イベント(priority >= 2)はシステムビジー時にスキップ
+        if event.priority >= 2 and (
+            self.mini_conv.is_busy() or (now - self._last_speech_time < 5.0)
+        ):
+            self.logger.info(
+                "Event '%s' throttled: system busy (mini_conv=%s, speech_gap=%.1fs)",
+                event.event_type, self.mini_conv.is_busy(), now - self._last_speech_time,
+            )
+            return
 
         self.logger.info("Game event: %s", event.event_type)
 

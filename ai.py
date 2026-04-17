@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 OLLAMA_MODEL      = os.environ.get("LLM_MODEL", "qwen3:8b")
 OLLAMA_API_URL    = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/generate")
-OLLAMA_TIMEOUT    = int(os.environ.get("OLLAMA_TIMEOUT", "10"))
+OLLAMA_TIMEOUT    = int(os.environ.get("OLLAMA_TIMEOUT", "25"))
 OLLAMA_NUM_PREDICT = 60
 
 MAX_VALIDATE_RETRY = 3   # validate_response 失敗時の最大再生成回数
@@ -458,7 +458,7 @@ class AICompanion:
         if constraints:
             constraint_lines = []
             if "must_start" in constraints:
-                constraint_lines.append(f"必ず次のいずれかの言葉で書き始めてください: {', '.join(constraints['must_start'])}")
+                constraint_lines.append(f"【厳命】必ず次のいずれかの言葉で文を書き始めてください（例外なし）: {', '.join(constraints['must_start'])}")
             if "forbidden" in constraints:
                 constraint_lines.append(f"以下の言葉は絶対に使わないでください: {', '.join(constraints['forbidden'])}")
             if "must_include" in constraints:

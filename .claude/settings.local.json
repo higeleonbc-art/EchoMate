@@ -6,7 +6,12 @@
       "Bash(python -c \"from main import EchoMate; print\\('OK'\\)\")",
       "Bash(ollama list *)",
       "WebSearch",
-      "Bash(python -c \"import ast, sys; ast.parse\\(open\\('gui.py', encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")"
+      "Bash(python -c \"import ast, sys; ast.parse\\(open\\('gui.py', encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python3)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(python -c ' *)"
     ]
   }
 }
