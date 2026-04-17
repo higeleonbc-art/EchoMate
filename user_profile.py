@@ -367,6 +367,48 @@ class UserProfile:
 
             return "【成長観察】" + " / ".join(parts)
 
+    def summarize_long_term(self, llm_fn) -> bool:
+        """
+        古くなった成長記録が10件以上ある場合、LLMで1つの物語に要約して
+        recent_context_summary を更新し、使用済み観察を圧縮する。
+
+        llm_fn: (prompt: str) -> str のシグネチャを持つLLM呼び出し関数。
+        Returns: 要約を実行した場合 True。
+        """
+        if self._patron_db is None:
+            return False
+        try:
+            obs = self._patron_db.get_growth_observations(limit=20)
+            if len(obs) < 10:
+                return False
+
+            texts = [o["text"] for o in reversed(obs)]  # 古い順
+            combined = "\n".join(f"- {t}" for t in texts)
+
+            prompt = (
+                "以下はゲームプレイヤーの成長観察記録です。\n"
+                "これらを1つのまとまった物語として、100文字以内の日本語で要約してください。\n"
+                "プレイヤーの変化・傾向・特徴を凝縮して表現してください。\n\n"
+                f"記録:\n{combined}\n\n"
+                "要約（100文字以内）:"
+            )
+
+            summary = llm_fn(prompt)
+            if not summary:
+                return False
+
+            self.update_context_summary(summary)
+            consumed = self._patron_db.consume_observations(len(obs))
+            self.save()
+            logger.info(
+                "Long-term memory summarized: %d observations compressed (%d chars)",
+                consumed, len(summary),
+            )
+            return True
+        except Exception as e:
+            logger.error("summarize_long_term error: %s", e)
+            return False
+
     def get_summary_for_prompt(self) -> str:
         """
         RAGプロンプトに埋め込む簡潔なプロファイルサマリーを返す。

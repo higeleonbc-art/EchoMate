@@ -280,6 +280,24 @@ class PatronDB:
                 )
                 return row["text"]
 
+    def consume_observations(self, count: int) -> int:
+        """古い成長観察を count 件消費済みにする（要約後の圧縮用）。消費した件数を返す。"""
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT id FROM growth_observations WHERE consumed = 0 "
+                    "ORDER BY timestamp ASC LIMIT ?",
+                    (count,),
+                ).fetchall()
+                ids = [r["id"] for r in rows]
+                if ids:
+                    conn.execute(
+                        f"UPDATE growth_observations SET consumed = 1 "
+                        f"WHERE id IN ({','.join('?' * len(ids))})",
+                        ids,
+                    )
+                return len(ids)
+
     def migrate_observations_from_list(self, observations: list[dict]) -> None:
         """user_profile.json から移行用: リストを一括インサート（既存データがない場合のみ）"""
         with self._lock:

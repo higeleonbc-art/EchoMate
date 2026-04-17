@@ -1670,7 +1670,7 @@ class EchoMateGUI:
 
         # ── フッター: 起動/停止 ───────────────────────────────────────────
         footer = ttk.Frame(self.root)
-        footer.pack(fill=tk.X, padx=8, pady=(0, 8))
+        footer.pack(fill=tk.X, padx=8, pady=(0, 2))
 
         self._btn_start = ttk.Button(footer, text="▶  EchoMate 起動",
                                      command=self._start_echomate, width=18)
@@ -1692,7 +1692,25 @@ class EchoMateGUI:
         )
         self._thinking_label.pack(side=tk.RIGHT, padx=8)
 
-        self.root.minsize(480, 480)
+        # ── フッター2: ゲーム音レベルバー（常時表示） ────────────────────
+        audio_footer = ttk.Frame(self.root, relief=tk.GROOVE, borderwidth=1)
+        audio_footer.pack(fill=tk.X, padx=8, pady=(0, 6))
+
+        ttk.Label(audio_footer, text="ゲーム音:", font=("Meiryo", 8),
+                  foreground="gray").pack(side=tk.LEFT, padx=(6, 2))
+        self._footer_audio_canvas = tk.Canvas(
+            audio_footer, height=14, bg="#1e1e1e", highlightthickness=0,
+        )
+        self._footer_audio_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, pady=3)
+        self._footer_audio_bar = self._footer_audio_canvas.create_rectangle(
+            0, 0, 0, 14, fill="#44aaff", outline="",
+        )
+        self._footer_audio_rms_var = tk.StringVar(value="0.0000")
+        ttk.Label(audio_footer, textvariable=self._footer_audio_rms_var,
+                  font=("Consolas", 8), foreground="gray", width=7).pack(side=tk.LEFT, padx=(0, 6))
+
+        self.root.minsize(480, 500)
+        self._poll_footer_audio()
 
     # ── サービスステータス確認 ────────────────────────────────────────────────
 
@@ -1881,6 +1899,26 @@ class EchoMateGUI:
             self.root.after(0, self.root.destroy)
 
         threading.Thread(target=_shutdown, daemon=True, name="AppShutdown").start()
+
+    # ── ゲーム音フッターポーリング ────────────────────────────────────────────
+
+    _FOOTER_RMS_SCALE = 800
+
+    def _poll_footer_audio(self) -> None:
+        rms = self._audio_monitor.current_rms
+        self._footer_audio_rms_var.set(f"{rms:.4f}")
+        try:
+            w = self._footer_audio_canvas.winfo_width()
+            if w < 2:
+                w = 400
+            scaled = min(rms * self._FOOTER_RMS_SCALE, 100) / 100
+            bar_x  = int(w * scaled)
+            color  = "#44aaff" if scaled < 0.5 else ("#aa66ff" if scaled < 0.8 else "#ff4444")
+            self._footer_audio_canvas.coords(self._footer_audio_bar, 0, 0, bar_x, 14)
+            self._footer_audio_canvas.itemconfig(self._footer_audio_bar, fill=color)
+        except Exception:
+            pass
+        self.root.after(100, self._poll_footer_audio)
 
     # ── メインループ ──────────────────────────────────────────────────────────
 

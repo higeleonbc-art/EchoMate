@@ -94,6 +94,9 @@ class PatronAnalyzer:
             # 長期記憶の要約（30件以上蓄積時）
             if len(logs) >= 30:
                 self._summarize_history(logs)
+
+            # 成長観察の長期要約（10件以上溜まった場合に圧縮）
+            self.profile.summarize_long_term(self._call_llm)
         except Exception as e:
             logger.error("PatronAnalyzer error: %s", e)
         finally:
@@ -361,6 +364,27 @@ class PatronAnalyzer:
                 logger.info("Context summary updated (%d chars)", len(raw))
         except Exception as e:
             logger.error("History summarization error: %s", e)
+
+    def _call_llm(self, prompt: str) -> str:
+        """汎用LLM呼び出しヘルパー（<think> タグ除去済みのテキストを返す）"""
+        try:
+            res = httpx.post(
+                OLLAMA_API_URL,
+                json={
+                    "model":  OLLAMA_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.3, "num_predict": 200},
+                },
+                timeout=OLLAMA_TIMEOUT,
+            )
+            if res.status_code == 200:
+                raw = res.json().get("response", "").strip()
+                raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+                return raw
+        except Exception as e:
+            logger.error("LLM call error: %s", e)
+        return ""
 
     # ------------------------------------------------------------------
     # ユーティリティ

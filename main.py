@@ -170,6 +170,7 @@ class EchoMate:
     PROACTIVE_COOLDOWN        = 120.0
     PROACTIVE_CHECK_INTERVAL  = 5.0
     STATE_TICK_INTERVAL       = 3.0   # StateManager.tick() の呼び出し間隔（秒）
+    EVENT_COOLDOWN_SEC        = 3.0   # 同一イベントの重複発話を防ぐクールダウン（秒）
 
     def __init__(
         self,
@@ -225,6 +226,7 @@ class EchoMate:
         self.running              = False
         self._last_speech_time    = time.time()
         self._last_proactive_time = 0.0
+        self._event_cooldowns: dict[str, float] = {}
         self._threads: list[threading.Thread] = []
 
         self.event_manager.load_memory()
@@ -592,6 +594,17 @@ class EchoMate:
             self.logger.error("PatronDB log error: %s", e)
 
     def _handle_game_event(self, event: GameEvent) -> None:
+        now = time.time()
+        last = self._event_cooldowns.get(event.event_type, 0.0)
+        if now - last < self.EVENT_COOLDOWN_SEC:
+            self.logger.debug(
+                "Event '%s' skipped: cooldown (%.1fs remaining)",
+                event.event_type,
+                self.EVENT_COOLDOWN_SEC - (now - last),
+            )
+            return
+        self._event_cooldowns[event.event_type] = now
+
         self.logger.info("Game event: %s", event.event_type)
 
         # 状態を更新
