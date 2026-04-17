@@ -482,6 +482,8 @@ class EchoMate:
         def _matches_ignore(text: str) -> bool:
             if text in ignore_words:
                 return True
+            if re.fullmatch(r'[あはひふへほっ]+', text):
+                return True
             unit = _get_repeating_unit(text)
             return unit != text and unit in ignore_words
 
