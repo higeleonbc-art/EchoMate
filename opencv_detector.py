@@ -290,7 +290,15 @@ class OpenCVDetector:
             mask = cv2.inRange(hsv, np.array(lo), np.array(hi))
 
         ratio = float(np.count_nonzero(mask)) / mask.size
-        logger.debug("Color detect [%s] ratio=%.3f threshold=%.3f", color, ratio, threshold)
+        operator = params.get("operator", "ge")
+
+        logger.debug(
+            "Color detect [%s] ratio=%.3f threshold=%.3f operator=%s",
+            color, ratio, threshold, operator
+        )
+
+        if operator == "le":
+            return ratio <= threshold
         return ratio >= threshold
 
     def _detect_by_template(self, frame: np.ndarray, params: dict) -> bool:

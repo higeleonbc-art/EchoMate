@@ -94,6 +94,7 @@ class AICompanion:
         self.current_character: dict = {}
         self._user_profile: Optional[object] = None   # UserProfile（良き隣人システム）
         self._vision_context: str = ""                # 最新の画面解析結果（VisionAnalyzer）
+        self._vision_history: list[str] = []          # 直近 VLM 解析履歴（推移把握用）
         self._thinking_callback: Optional[object] = None  # (is_thinking: bool) -> None
         self._load_characters()
         self.set_character(DEFAULT_CHARACTER)
@@ -108,8 +109,12 @@ class AICompanion:
         self._user_profile = profile
 
     def set_vision_context(self, context: str) -> None:
-        """最新の画面解析テキストを設定する（VisionAnalyzer連携用）"""
-        self._vision_context = context
+        """最新の画面解析テキストを設定し、履歴にも追記する（VisionAnalyzer連携用）"""
+        if context and context != self._vision_context:
+            self._vision_context = context
+            self._vision_history.append(context)
+            if len(self._vision_history) > 3:
+                self._vision_history.pop(0)
 
     # ------------------------------------------------------------------
     # キャラクター管理
@@ -193,10 +198,15 @@ class AICompanion:
             "返答:"
         )
 
-        # Task1: テンションが低い時、30%の確率で話題を広げる質問を促す
+        # テンションが低い時、30%の確率で話題を広げる質問を促す
         tension = state.to_dict().get("tension", 0.0) if (state and hasattr(state, "to_dict")) else 0.0
         if tension < 0.4 and random.random() < 0.3:
             prompt += "\n※最後に、話題を広げるための短い質問や疑問をプレイヤーに投げかけてください"
+
+        # 操作強度が高い場合は忙しそうなプレイヤーへの短い声かけを促す
+        intensity = state.to_dict().get("input_intensity", 0.0) if (state and hasattr(state, "to_dict")) else 0.0
+        if intensity >= 0.5:
+            prompt += "\n※プレイヤーは今激しく操作中（連打・忙しそう）。短い一言で声をかけてください。"
 
         response = self._call_with_validation(prompt, max_chars=40, growth_hint=growth_hint)
 
@@ -431,8 +441,14 @@ class AICompanion:
             prefix_parts.append(profile_ctx)
         if game_knowledge_ctx:
             prefix_parts.append(game_knowledge_ctx)
-        if self._vision_context:
-            prefix_parts.append(f"【画面状況】{self._vision_context}")
+        if self._vision_history:
+            if len(self._vision_history) >= 2:
+                history_lines = " → ".join(
+                    f"[{i + 1}]{ctx}" for i, ctx in enumerate(self._vision_history)
+                )
+                prefix_parts.append(f"【画面推移】{history_lines}")
+            else:
+                prefix_parts.append(f"【画面状況】{self._vision_history[-1]}")
         if growth_hint:
             prefix_parts.append(f"（観察メモ: {growth_hint}）")
         prefix = "\n".join(prefix_parts)

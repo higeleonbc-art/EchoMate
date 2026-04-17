@@ -34,3 +34,7 @@ pywin32>=306; sys_platform == "win32"
 psutil>=5.9.0
 # 画像表示（ROI セレクター）
 Pillow>=10.0.0
+
+# ── プレイヤー操作強度モニタリング（input_monitor.py）────────
+# マウス・キーボードイベント監視
+pynput>=1.7.6

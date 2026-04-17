@@ -41,6 +41,7 @@ import argparse
 logger = logging.getLogger(__name__)
 
 from event import EventManager, GameEvent, generate_dummy_event
+from input_monitor import InputMonitor
 from typing import Callable, Optional
 from ai import AICompanion
 from voice import VoiceOutput, VoiceInput
@@ -171,6 +172,7 @@ class EchoMate:
     PROACTIVE_CHECK_INTERVAL  = 5.0
     STATE_TICK_INTERVAL       = 3.0   # StateManager.tick() の呼び出し間隔（秒）
     EVENT_COOLDOWN_SEC        = 3.0   # 同一イベントの重複発話を防ぐクールダウン（秒）
+    PROACTIVE_VISION_INTERVAL = 20.0  # 自発的 VLM 解析の間隔（秒）
 
     def __init__(
         self,
@@ -222,10 +224,16 @@ class EchoMate:
         self.enable_dummy      = enable_dummy
         self._speech_callback  = speech_callback
 
+        # 操作強度モニタリング
+        self.input_monitor = InputMonitor(
+            event_callback=self.state_manager.record_input_event
+        )
+
         # タイミング管理
-        self.running              = False
-        self._last_speech_time    = time.time()
-        self._last_proactive_time = 0.0
+        self.running                   = False
+        self._last_speech_time         = time.time()
+        self._last_proactive_time      = 0.0
+        self._last_proactive_vision    = 0.0
         self._event_cooldowns: dict[str, float] = {}
         self._threads: list[threading.Thread] = []
 
@@ -330,6 +338,12 @@ class EchoMate:
         elif self.audio_detector:
             print("[Audio] pyaudio not installed — audio detection disabled")
 
+        if self.input_monitor.available:
+            self.input_monitor.start()
+            print("[Input]  Player input intensity monitoring enabled")
+        else:
+            print("[Input]  pynput not installed — input monitoring disabled")
+
     def stop(self) -> None:
         self.running = False
         if self.cv_detector:
@@ -338,6 +352,7 @@ class EchoMate:
             self.audio_detector.stop()
         if self.vision_analyzer:
             self.vision_analyzer.stop()
+        self.input_monitor.stop()
         self.event_manager.save_memory()
 
         # セッション終了時の分析・プロファイル更新
@@ -402,6 +417,27 @@ class EchoMate:
             time.sleep(self.PROACTIVE_CHECK_INTERVAL)
             try:
                 now            = time.time()
+
+                # 自発的 VLM 解析（PROACTIVE_VISION_INTERVAL ごとに画面を観察）
+                if (
+                    self.vision_analyzer
+                    and self.vision_analyzer.is_available()
+                    and now - self._last_proactive_vision >= self.PROACTIVE_VISION_INTERVAL
+                ):
+                    self._last_proactive_vision = now
+                    def _run_proactive_vision() -> None:
+                        try:
+                            from vision_analyzer import VISION_PROMPT
+                            result = self.vision_analyzer.analyze_now(VISION_PROMPT)
+                            if result:
+                                self.ai.set_vision_context(result)
+                                self.logger.debug("Proactive vision updated: %s", result[:60])
+                        except Exception as e:
+                            self.logger.error("Proactive vision error: %s", e)
+                    threading.Thread(
+                        target=_run_proactive_vision, daemon=True, name="ProactiveVision"
+                    ).start()
+
                 silence        = now - self._last_speech_time
                 since_last_pro = now - self._last_proactive_time
                 if silence >= self.SILENCE_THRESHOLD and since_last_pro >= self.PROACTIVE_COOLDOWN:
