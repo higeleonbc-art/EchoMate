@@ -10,3 +10,4 @@ user_profile.json
 
 # ローカル設定（モデル名・API URLなど）
 .env
+.clauderules

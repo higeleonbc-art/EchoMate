@@ -591,7 +591,7 @@ class EchoMate:
             self.observer.record_death()
 
         # step1: 即時リアクション
-        reaction = self.ai.get_reaction(event.event_type, state, use_template=True)
+        reaction = self.ai.get_reaction(event.event_type, state, use_template=False)
 
         # 安全フィルター
         tension      = state.to_dict().get("tension", 0.0) if hasattr(state, "to_dict") else 0.0

@@ -431,6 +431,27 @@ class AICompanion:
             prefix_parts.append(f"（観察メモ: {growth_hint}）")
         prefix = "\n".join(prefix_parts)
 
+        # キャラクター制約を動的にプロンプトへ注入
+        constraints = self.current_character.get("constraints", {})
+        if constraints:
+            constraint_lines = []
+            if "must_start" in constraints:
+                constraint_lines.append(f"必ず次のいずれかの言葉で書き始めてください: {', '.join(constraints['must_start'])}")
+            if "forbidden" in constraints:
+                constraint_lines.append(f"以下の言葉は絶対に使わないでください: {', '.join(constraints['forbidden'])}")
+            if "must_include" in constraints:
+                constraint_lines.append(f"以下の言葉のいずれかを必ず含めてください: {', '.join(constraints['must_include'])}")
+            if constraints.get("no_exclamation"):
+                constraint_lines.append("「！」（感嘆符）は絶対に使わないでください。")
+            if "must_sequence" in constraints:
+                constraint_lines.append(f"次の順番で内容を構成してください: {' -> '.join(constraints['must_sequence'])}")
+            if constraints.get("must_include_advice"):
+                constraint_lines.append("必ずプレイヤーへの具体的な助言や行動指示を含めてください。")
+            
+            if constraint_lines:
+                c_text = "【制約事項】\n" + "\n".join(f"- {c}" for c in constraint_lines)
+                rules_text = f"{rules_text}\n\n{c_text}" if rules_text else c_text
+
         base_prompt = f"{rules_text}\n\n{prompt}" if rules_text else prompt
         full_prompt  = f"{prefix}\n\n{base_prompt}" if prefix else base_prompt
 
