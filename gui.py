@@ -1073,11 +1073,15 @@ class CharacterFrame(ttk.Frame):
         self._selected = tk.StringVar()
         self._build()
 
+    # 現在有効なキャラクター（他はデータを保持しつつ非公開）
+    _ENABLED_CHARACTERS = ["echo"]
+
     def _build(self) -> None:
         try:
             with open("characters.json", encoding="utf-8") as f:
                 raw = json.load(f)
-            self._chars = {k: v for k, v in raw.items() if not k.startswith("_")}
+            all_chars = {k: v for k, v in raw.items() if not k.startswith("_")}
+            self._chars = {k: v for k, v in all_chars.items() if k in self._ENABLED_CHARACTERS}
         except Exception:
             self._chars = {}
 
@@ -1108,8 +1112,8 @@ class CharacterFrame(ttk.Frame):
                       font=("Meiryo", 9)).grid(row=i, column=1, sticky=tk.W, padx=4)
 
         # デフォルト選択
-        if "kid" in self._chars:
-            self._selected.set("kid")
+        if "echo" in self._chars:
+            self._selected.set("echo")
         elif self._chars:
             self._selected.set(next(iter(self._chars)))
 

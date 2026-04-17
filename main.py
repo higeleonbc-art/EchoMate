@@ -820,9 +820,9 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="EchoMate - Game AI Companion")
     p.add_argument(
         "--character", "-c",
-        default="kid",
-        choices=["michiko", "kid", "rei", "ryu", "akane", "echo"],
-        help="使用するキャラクター（デフォルト: kid）",
+        default="echo",
+        choices=["echo"],
+        help="使用するキャラクター（現在: echo のみ）",
     )
     p.add_argument("--no-cv",    action="store_true", help="OpenCV 検出を無効化")
     p.add_argument("--no-audio", action="store_true", help="音声検出を無効化")

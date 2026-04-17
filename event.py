@@ -82,6 +82,19 @@ class EventManager:
 
     def add_event(self, event: GameEvent) -> None:
         """イベントをキューに追加する"""
+        if event.event_type == "player_speech":
+            # 古い player_speech は文脈がズレるので捨てて最新だけ残す
+            items: list = []
+            while True:
+                try:
+                    items.append(self.event_queue.get_nowait())
+                except queue.Empty:
+                    break
+            stale = sum(1 for _, _, e in items if e.event_type == "player_speech")
+            if stale:
+                logger.info("Dropped %d stale player_speech event(s) from queue", stale)
+            for item in (x for x in items if x[2].event_type != "player_speech"):
+                self.event_queue.put(item)
         self.event_queue.put((event.priority, event.timestamp, event))
         logger.debug("Event added: %s (priority=%d)", event.event_type, event.priority)
 

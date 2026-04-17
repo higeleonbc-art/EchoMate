@@ -23,6 +23,7 @@ import os
 import time
 import random
 import re
+from collections import deque
 from typing import Optional
 
 import httpx
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 OLLAMA_MODEL      = os.environ.get("LLM_MODEL", "qwen3:8b")
 OLLAMA_API_URL    = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/generate")
 OLLAMA_TIMEOUT    = int(os.environ.get("OLLAMA_TIMEOUT", "25"))
-OLLAMA_NUM_PREDICT = 60
+OLLAMA_NUM_PREDICT = 256
 
 MAX_VALIDATE_RETRY = 3   # validate_response 失敗時の最大再生成回数
 
@@ -70,7 +71,7 @@ FOLLOWUP_STEP_PROMPTS: dict[int, str] = {
     3: "それを踏まえて、締めの一言を言ってください。",
 }
 
-DEFAULT_CHARACTER = "kid"
+DEFAULT_CHARACTER = "echo"
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +97,7 @@ class AICompanion:
         self._vision_context: str = ""                # 最新の画面解析結果（VisionAnalyzer）
         self._vision_history: list[str] = []          # 直近 VLM 解析履歴（推移把握用）
         self._thinking_callback: Optional[object] = None  # (is_thinking: bool) -> None
+        self._recent_responses: deque = deque(maxlen=6)   # 繰り返し防止用直近応答履歴
         self._load_characters()
         self.set_character(DEFAULT_CHARACTER)
 
@@ -159,6 +161,7 @@ class AICompanion:
         """
         ゲームイベントへの即時リアクションを返す（step 1）。
         use_template=True の場合テンプレートで高速応答。
+        LLM 使用時は軽量プロンプト（RAG なし）で低レイテンシを優先。
         """
         if use_template:
             templates = REACTION_TEMPLATES.get(event_type, ["おっ！"])
@@ -171,7 +174,8 @@ class AICompanion:
             "【重要】状況を説明するのではなく、状況を踏まえてプレイヤーに対し感情的にリアクションしてください。\n"
             "1文・最大15文字で感情的なリアクションをしてください。"
         )
-        return self._call_with_validation(prompt, max_chars=15)
+        # 即時リアクションは軽量モード（RAG/ビジョン/履歴を注入しない）で速度優先
+        return self._call_with_validation(prompt, max_chars=15, lightweight=True)
 
     def get_response(
         self,
@@ -408,6 +412,7 @@ class AICompanion:
         prompt: str,
         max_chars: int = 40,
         growth_hint: Optional[str] = None,
+        lightweight: bool = False,
     ) -> str:
         """
         LLM を呼び出し、validate_response が通るまで最大 MAX_VALIDATE_RETRY 回リトライする。
@@ -417,40 +422,44 @@ class AICompanion:
             prompt:      ユーザー向けプロンプト本文
             max_chars:   応答の最大文字数
             growth_hint: 成長観察ヒント（Noneなら注入しない）
+            lightweight: True の場合 RAG/ビジョン/プロファイルを注入しない（即時リアクション用）
         """
         system_prompt = self.current_character.get("system_prompt", "")
         rules_text = ""
         if self.current_character.get("rules"):
             rules_text = "ルール:\n" + "\n".join(f"- {r}" for r in self.current_character["rules"])
 
-        # bond_level が高い場合、大親友ルールを動的注入
-        if self._user_profile is not None:
-            try:
-                bond = self._user_profile.get_bond_level()
-                if bond >= 0.7:
-                    friend_rule = "【最重要】あなたはこのプレイヤーの大親友です。極めてフランクに、遠慮なく、親しみを込めて話してください。"
-                    system_prompt = f"{friend_rule}\n{system_prompt}" if system_prompt else friend_rule
-            except Exception:
-                pass
-
-        # ユーザープロファイルを先頭に注入（RAG）
-        profile_ctx = self._build_profile_context()
-        game_knowledge_ctx = self._build_game_knowledge_context()
         prefix_parts = []
-        if profile_ctx:
-            prefix_parts.append(profile_ctx)
-        if game_knowledge_ctx:
-            prefix_parts.append(game_knowledge_ctx)
-        if self._vision_history:
-            if len(self._vision_history) >= 2:
-                history_lines = " → ".join(
-                    f"[{i + 1}]{ctx}" for i, ctx in enumerate(self._vision_history)
-                )
-                prefix_parts.append(f"【画面推移】{history_lines}")
-            else:
-                prefix_parts.append(f"【画面状況】{self._vision_history[-1]}")
-        if growth_hint:
-            prefix_parts.append(f"（観察メモ: {growth_hint}）")
+
+        if not lightweight:
+            # bond_level が高い場合、大親友ルールを動的注入
+            if self._user_profile is not None:
+                try:
+                    bond = self._user_profile.get_bond_level()
+                    if bond >= 0.7:
+                        friend_rule = "【最重要】あなたはこのプレイヤーの大親友です。極めてフランクに、遠慮なく、親しみを込めて話してください。"
+                        system_prompt = f"{friend_rule}\n{system_prompt}" if system_prompt else friend_rule
+                except Exception:
+                    pass
+
+            # ユーザープロファイルを先頭に注入（RAG）
+            profile_ctx = self._build_profile_context()
+            game_knowledge_ctx = self._build_game_knowledge_context()
+            if profile_ctx:
+                prefix_parts.append(profile_ctx)
+            if game_knowledge_ctx:
+                prefix_parts.append(game_knowledge_ctx)
+            if self._vision_history:
+                if len(self._vision_history) >= 2:
+                    history_lines = " → ".join(
+                        f"[{i + 1}]{ctx}" for i, ctx in enumerate(self._vision_history)
+                    )
+                    prefix_parts.append(f"【画面推移】{history_lines}")
+                else:
+                    prefix_parts.append(f"【画面状況】{self._vision_history[-1]}")
+            if growth_hint:
+                prefix_parts.append(f"（観察メモ: {growth_hint}）")
+
         prefix = "\n".join(prefix_parts)
 
         # キャラクター制約を動的にプロンプトへ注入
@@ -477,8 +486,8 @@ class AICompanion:
         base_prompt = f"{rules_text}\n\n{prompt}" if rules_text else prompt
         full_prompt  = f"{prefix}\n\n{base_prompt}" if prefix else base_prompt
 
-        # プレイスタイルに応じたトーン補正
-        if self._user_profile is not None:
+        # プレイスタイルに応じたトーン補正（軽量モード時はスキップ）
+        if not lightweight and self._user_profile is not None:
             try:
                 labels = self._user_profile.get().get("playstyle_labels", [])
                 tone_hints = []
@@ -491,16 +500,24 @@ class AICompanion:
             except Exception:
                 pass
 
+        # 直近の応答を繰り返さないようプロンプトに注入
+        if self._recent_responses:
+            avoid = "、".join(f"「{r[:20]}」" for r in list(self._recent_responses)[-3:])
+            full_prompt = f"【直前の発言（類似・繰り返し禁止）】{avoid}\n\n{full_prompt}"
+
         for attempt in range(1, MAX_VALIDATE_RETRY + 1):
             raw = self._call_ollama(full_prompt, system_prompt, max_chars)  # type: ignore[arg-type]
             if self.validate_response(raw):
                 if attempt > 1:
                     logger.debug("Validation passed on attempt %d", attempt)
+                self._recent_responses.append(raw)
                 return raw
             logger.debug("Validation failed (attempt %d/%d): %s", attempt, MAX_VALIDATE_RETRY, raw)
 
         logger.warning("All %d validation attempts failed, using fallback", MAX_VALIDATE_RETRY)
-        return random.choice(FALLBACK_RESPONSES)
+        fallback = random.choice(FALLBACK_RESPONSES)
+        self._recent_responses.append(fallback)
+        return fallback
 
     def _call_ollama(self, prompt: str, system_prompt: str, max_chars: int) -> str:
         """Ollama HTTP API を呼び出す。system パラメータでキャラクターを注入。"""
@@ -515,6 +532,7 @@ class AICompanion:
                 "model":  self.model,
                 "prompt": prompt,
                 "stream": False,
+                "think":  False,
                 "options": {
                     "num_predict": OLLAMA_NUM_PREDICT,
                     "temperature": 0.8,

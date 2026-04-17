@@ -191,28 +191,58 @@ class AudioDetector:
             time.sleep(poll_interval)
         return None
 
+    @staticmethod
+    def _find_wasapi_loopback_device(p: "pyaudio.PyAudio") -> int | None:
+        """pyaudiowpatch でシステム音声ループバックデバイスを探す"""
+        if not _WPATCH_AVAILABLE:
+            return None
+        try:
+            wasapi_idx = p.get_host_api_info_by_type(pyaudio.paWASAPI)["defaultOutputDevice"]
+            default_name = p.get_device_info_by_index(wasapi_idx)["name"]
+            for i in range(p.get_device_count()):
+                info = p.get_device_info_by_index(i)
+                if info.get("isLoopbackDevice") and default_name in info["name"]:
+                    return i
+        except Exception:
+            pass
+        return None
+
     def _audio_loop(self) -> None:
         """マイクまたはループバックデバイスから連続取得してRMSを評価するメインループ"""
         from audio_capture_pro import is_available as is_pac_available
         if is_pac_available() and (self.target_exe or self.exclude_pids):
             self.is_fallback_mode = (self.target_exe is None)
             self._audio_loop_pac()
-            return
+            # PAC でデータが取れなかった場合はループバックにフォールバック
+            if not self.running:
+                return
+            logger.info("PAC gave no audio data — falling back to WASAPI loopback")
 
         p = pyaudio.PyAudio()
         stream = None
         try:
-            rate = self._resolve_rate(p, self.device_index)
+            # デバイス未指定 + WPatch 有効 → ループバックデバイスを自動選択
+            device_index = self.device_index
+            if device_index is None and _WPATCH_AVAILABLE:
+                loopback_idx = self._find_wasapi_loopback_device(p)
+                if loopback_idx is not None:
+                    device_index = loopback_idx
+                    self.is_fallback_mode = False  # ループバックは自己ループ不要
+                    logger.info("WASAPI loopback device selected (index=%d)", loopback_idx)
+
+            rate = self._resolve_rate(p, device_index)
+            loopback_flag = _WPATCH_AVAILABLE and device_index is not None and p.get_device_info_by_index(device_index).get("isLoopbackDevice", False)
             stream = p.open(
                 format=pyaudio.paFloat32,
                 channels=CHANNELS,
                 rate=rate,
                 input=True,
                 frames_per_buffer=CHUNK,
-                input_device_index=self.device_index,
+                input_device_index=device_index,
+                **({"as_loopback": True} if loopback_flag else {}),
             )
-            logger.info("Audio stream opened (device=%s, rate=%d, chunk=%d)",
-                        self.device_index, rate, CHUNK)
+            logger.info("Audio stream opened (device=%s, rate=%d, chunk=%d, loopback=%s)",
+                        device_index, rate, CHUNK, loopback_flag)
 
             # 動的ベースライン（環境音に適応）
             baseline = 0.0
@@ -266,6 +296,7 @@ class AudioDetector:
         from audio_capture_pro import AudioCaptureProWrapper
 
         ALIVE_CHECK_INTERVAL = 5.0  # プロセス生存確認の間隔（秒）
+        pac_fallback = False         # True のとき外側ループを抜けてloopbackへ移行
 
         while self.running:
             # EXE名モード: プロセスが起動するまで待つ
@@ -284,6 +315,9 @@ class AudioDetector:
             baseline = 0.0
             frame_count = 0
             last_alive_check = time.time()
+            last_data_time   = time.time()
+            NO_DATA_TIMEOUT  = 15.0   # 秒：この間データが来なければループバックへ移行
+            pac_has_data     = False  # 一度でもデータが来たかフラグ
 
             try:
                 while self.running:
@@ -291,6 +325,14 @@ class AudioDetector:
                     now = time.time()
 
                     if rms is None:
+                        # データなしタイムアウト（初回のみ判定 — 一度来たら通常の生存確認へ）
+                        if not pac_has_data and now - last_data_time > NO_DATA_TIMEOUT:
+                            logger.warning(
+                                "PAC: no audio data from '%s' in %.0fs — will fall back to loopback",
+                                self.target_exe, NO_DATA_TIMEOUT,
+                            )
+                            pac_fallback = True
+                            break
                         # プロセス生存確認（EXE名モードのみ）
                         if self.target_exe and now - last_alive_check > ALIVE_CHECK_INTERVAL:
                             last_alive_check = now
@@ -300,6 +342,8 @@ class AudioDetector:
                         time.sleep(0.01)
                         continue
 
+                    pac_has_data     = True
+                    last_data_time   = now
                     last_alive_check = now
                     self.current_rms = rms
                     baseline = EMA_ALPHA * rms + (1.0 - EMA_ALPHA) * baseline
@@ -325,8 +369,8 @@ class AudioDetector:
                 self.current_rms = 0.0
                 logger.info("PAC audio loop closed (exe=%s, pid=%s)", self.target_exe, pid)
 
-            # EXE名モードでなければ再試行しない
-            if not self.target_exe:
+            # no-data fallback またはEXE名モードでなければ再試行しない
+            if pac_fallback or not self.target_exe:
                 break
 
     # ------------------------------------------------------------------

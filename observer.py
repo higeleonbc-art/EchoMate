@@ -67,6 +67,8 @@ class ObserverModule:
         self._growth_cooldown  = 300.0  # 成長観察の最小間隔（秒）
         self._recent_deaths    = 0
         self._last_death_time  = 0.0
+        self._last_care_time   = 0.0
+        self._care_cooldown    = 60.0   # ケアメッセージの最小間隔（秒）
 
     # ------------------------------------------------------------------
     # 主要フィルター
@@ -93,10 +95,13 @@ class ObserverModule:
             logger.warning("Dependency/romantic pattern detected — replacing response")
             return random.choice(_SAFE_FALLBACK_RESPONSES)
 
-        # 2. 高ストレス時のケア（ストレス値 > 0.8）
+        # 2. 高ストレス時のケア（ストレス値 > 0.8、クールダウン60秒）
         if stress_score > 0.8:
-            logger.info("High stress (%.2f) — injecting care message", stress_score)
-            return random.choice(_STRESS_RELIEF_MESSAGES)
+            now = time.time()
+            if now - self._last_care_time >= self._care_cooldown:
+                logger.info("High stress (%.2f) — injecting care message", stress_score)
+                self._last_care_time = now
+                return random.choice(_STRESS_RELIEF_MESSAGES)
 
         return text
 

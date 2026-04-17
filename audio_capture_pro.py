@@ -78,7 +78,7 @@ class AudioCaptureProWrapper:
             except Exception as e:
                 logger.warning("AudioCaptureProWrapper stop error: %s", e)
             self._capture = None
-        logger.info("AudioCaptureProWrapper stopped (pid=%d)", self._pid)
+        logger.info("AudioCaptureProWrapper stopped (pid=%s)", self._pid)
 
     def read_rms(self, timeout: float = 0.1) -> float | None:
         """キューから RMS 相当値 (0.0〜1.0) を取り出す。タイムアウト時は None。"""

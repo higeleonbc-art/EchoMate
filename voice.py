@@ -156,6 +156,8 @@ class VoiceOutput:
         if not _PYAUDIO_AVAILABLE:
             logger.warning("pyaudio not installed — skipping playback")
             return
+        p = None
+        st = None
         try:
             buf = io.BytesIO(wav_bytes)
             with wave.open(buf, "rb") as wf:
@@ -175,12 +177,20 @@ class VoiceOutput:
                         break
                     st.write(data)
                     data = wf.readframes(AUDIO_CHUNK_SIZE)
-                st.stop_stream()
-                st.close()
-                p.terminate()
         except Exception as e:
             logger.error("Audio playback error: %s", e)
         finally:
+            if st is not None:
+                try:
+                    st.stop_stream()
+                    st.close()
+                except Exception:
+                    pass
+            if p is not None:
+                try:
+                    p.terminate()
+                except Exception:
+                    pass
             self.is_speaking = False
 
 
