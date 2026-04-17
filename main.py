@@ -187,10 +187,11 @@ class EchoMate:
     _EVENT_COOLDOWNS: dict = {
         "kill":     5.0,
         "death":    5.0,
-        "low_hp":  10.0,
+        "low_hp":  20.0,   # 継続状態ロジックと組み合わせて頻度を抑制
         "big_play": 10.0,
     }
     _EVENT_COOLDOWN_DEFAULT = 10.0
+    _LOW_HP_PERSIST_COOLDOWN = 60.0  # HP低下が継続している間の再発火間隔（秒）
 
     def __init__(
         self,
@@ -255,6 +256,7 @@ class EchoMate:
         self._last_proactive_time      = 0.0
         self._last_proactive_vision    = 0.0
         self._event_cooldowns: dict[str, float] = {}
+        self._persistent_conditions: set[str] = set()  # HP低下など継続中の状態
         self._threads: list[threading.Thread] = []
 
         self.event_manager.load_memory()
@@ -366,6 +368,7 @@ class EchoMate:
 
     def stop(self) -> None:
         self.running = False
+        self.voice_output.stop()  # 再生中の音声を即座に停止
         if self.cv_detector:
             self.cv_detector.stop()
         if self.audio_detector:
@@ -651,7 +654,17 @@ class EchoMate:
 
     def _handle_game_event(self, event: GameEvent) -> None:
         now = time.time()
+
+        # kill/big_play が来たら low_hp 継続状態をリセット（HP回復とみなす）
+        if event.event_type in ("kill", "big_play"):
+            self._persistent_conditions.discard("low_hp")
+
         cooldown = self._EVENT_COOLDOWNS.get(event.event_type, self._EVENT_COOLDOWN_DEFAULT)
+
+        # low_hp が継続中（まだ回復していない）場合はより長いクールダウンを使う
+        if event.event_type == "low_hp" and "low_hp" in self._persistent_conditions:
+            cooldown = self._LOW_HP_PERSIST_COOLDOWN
+
         last = self._event_cooldowns.get(event.event_type, 0.0)
         if now - last < cooldown:
             self.logger.debug(
@@ -661,6 +674,13 @@ class EchoMate:
             )
             return
         self._event_cooldowns[event.event_type] = now
+
+        # low_hp を処理したら「継続中」状態にセット
+        if event.event_type == "low_hp":
+            self._persistent_conditions.add("low_hp")
+        # death 時も low_hp 状態をリセット（死んだら体力は戻る）
+        if event.event_type == "death":
+            self._persistent_conditions.discard("low_hp")
 
         # 中・低優先度イベント(priority >= 2)はシステムビジー時にスキップ
         if event.priority >= 2 and (

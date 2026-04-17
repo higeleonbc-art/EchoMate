@@ -67,8 +67,8 @@ PROACTIVE_TEMPLATES = ["ねえ、調子どう？", "何か作戦ある？", "敵
 
 # ミニ会話 step ごとのプロンプト補足
 FOLLOWUP_STEP_PROMPTS: dict[int, str] = {
-    2: "先ほどの出来事について、プレイへの評価を1文で言ってください。",
-    3: "それを踏まえて、締めの一言を言ってください。",
+    2: "先ほどの出来事について、直前とはまったく違う角度から一言コメントしてください。詩的な表現は禁止です。",
+    3: "話題を変えて、プレイヤーへの短い声かけや質問をしてください。ゲームの状況に絡めてください。",
 }
 
 DEFAULT_CHARACTER = "echo"
@@ -97,7 +97,7 @@ class AICompanion:
         self._vision_context: str = ""                # 最新の画面解析結果（VisionAnalyzer）
         self._vision_history: list[str] = []          # 直近 VLM 解析履歴（推移把握用）
         self._thinking_callback: Optional[object] = None  # (is_thinking: bool) -> None
-        self._recent_responses: deque = deque(maxlen=6)   # 繰り返し防止用直近応答履歴
+        self._recent_responses: deque = deque(maxlen=10)  # 繰り返し防止用直近応答履歴
         self._load_characters()
         self.set_character(DEFAULT_CHARACTER)
 
@@ -161,21 +161,23 @@ class AICompanion:
         """
         ゲームイベントへの即時リアクションを返す（step 1）。
         use_template=True の場合テンプレートで高速応答。
+        キャラクター固有の reaction_templates が定義されていればそちらを優先。
         LLM 使用時は軽量プロンプト（RAG なし）で低レイテンシを優先。
         """
         if use_template:
-            templates = REACTION_TEMPLATES.get(event_type, ["おっ！"])
+            # キャラ固有テンプレートを優先、なければデフォルトテンプレート
+            char_templates = self.current_character.get("reaction_templates", {})
+            templates = char_templates.get(event_type) or REACTION_TEMPLATES.get(event_type, ["おっ"])
             return random.choice(templates)
 
         state_ctx = state.summary() if state else ""
         prompt = (
-            f"イベント「{event_type}」が発生した。\n"
+            f"ゲームイベント「{event_type}」が起きた。\n"
             f"現在の状態:\n{state_ctx}\n\n"
-            "【重要】状況を説明するのではなく、状況を踏まえてプレイヤーに対し感情的にリアクションしてください。\n"
-            "1文・最大15文字で感情的なリアクションをしてください。"
+            "状況を説明せず、プレイヤーへの自然な一言リアクションを返してください。"
         )
         # 即時リアクションは軽量モード（RAG/ビジョン/履歴を注入しない）で速度優先
-        return self._call_with_validation(prompt, max_chars=15, lightweight=True)
+        return self._call_with_validation(prompt, max_chars=60, lightweight=True)
 
     def get_response(
         self,
@@ -191,28 +193,26 @@ class AICompanion:
         state_ctx   = state.summary() if state else "（状態情報なし）"
 
         sentiment_line = f"{sentiment_context}\n" if sentiment_context else ""
+        tension = state.to_dict().get("tension", 0.0) if (state and hasattr(state, "to_dict")) else 0.0
+        intensity = state.to_dict().get("input_intensity", 0.0) if (state and hasattr(state, "to_dict")) else 0.0
+
+        extra = ""
+        if intensity >= 0.5:
+            extra = "\nプレイヤーは今激しく操作中なので短めに。"
+        elif tension < 0.4 and random.random() < 0.3:
+            extra = "\n最後に話題を広げる一言を添えてください。"
+
         prompt = (
             f"{memory_ctx}\n\n"
             f"現在の状態:\n{state_ctx}\n\n"
             f"{history_ctx}\n"
             f"{sentiment_line}"
             f"プレイヤーの発言:「{player_input}」\n\n"
-            "【重要】状況を説明するのではなく、状況を踏まえてプレイヤーに対し感情的にリアクションしてください。\n"
-            "ルール: 1〜2文・最大40文字・フランク・時々質問・日本語のみ\n"
+            f"上記に対して自然に返答してください。{extra}\n"
             "返答:"
         )
 
-        # テンションが低い時、30%の確率で話題を広げる質問を促す
-        tension = state.to_dict().get("tension", 0.0) if (state and hasattr(state, "to_dict")) else 0.0
-        if tension < 0.4 and random.random() < 0.3:
-            prompt += "\n※最後に、話題を広げるための短い質問や疑問をプレイヤーに投げかけてください"
-
-        # 操作強度が高い場合は忙しそうなプレイヤーへの短い声かけを促す
-        intensity = state.to_dict().get("input_intensity", 0.0) if (state and hasattr(state, "to_dict")) else 0.0
-        if intensity >= 0.5:
-            prompt += "\n※プレイヤーは今激しく操作中（連打・忙しそう）。短い一言で声をかけてください。"
-
-        response = self._call_with_validation(prompt, max_chars=40, growth_hint=growth_hint)
+        response = self._call_with_validation(prompt, max_chars=80, growth_hint=growth_hint)
 
         self._conversation_history.append({"player": player_input, "ai": response})
         if len(self._conversation_history) > 10:
@@ -248,12 +248,10 @@ class AICompanion:
             f"{memory_ctx}\n\n"
             f"直前のゲームイベント: {event_type}\n"
             f"状態:\n{state_ctx}\n\n"
-            "【重要】状況を説明するのではなく、状況を踏まえてプレイヤーに対し感情的にリアクションしてください。\n"
             f"{step_instruction}\n"
-            "1文・最大30文字で返してください。\n"
             "返答:"
         )
-        return self._call_with_validation(prompt, max_chars=30)
+        return self._call_with_validation(prompt, max_chars=80)
 
     def get_proactive_message(
         self,
@@ -284,11 +282,10 @@ class AICompanion:
                         f"{memory_ctx}\n"
                         f"{state_ctx}\n\n"
                         f"過去の印象的な出来事{game_note}:「{ep_text}」\n"
-                        "この出来事を自然に蒸し返して、「そういえばあの時の…」のように話題を出してください。\n"
-                        "ルール: 1文・最大35文字・フランク\n"
+                        "この出来事を自然に蒸し返して話題にしてください。\n"
                         "発言:"
                     )
-                    return self._call_with_validation(prompt, max_chars=35, growth_hint=growth_hint)
+                    return self._call_with_validation(prompt, max_chars=80, growth_hint=growth_hint)
             except Exception:
                 pass
 
@@ -298,20 +295,17 @@ class AICompanion:
             prompt = (
                 f"{memory_ctx}\n"
                 f"{state_ctx}\n\n"
-                "直近の会話内容（recent_topics）の中からひとつを選び、『そういえばさっきの件だけど…』と後追いのコメントや質問を投げてください。状況説明は不要です。\n"
-                "ルール: 1文・最大30文字・フランク\n"
+                "さっきの会話の話題を自然に蒸し返して一言コメントや質問を投げてください。\n"
                 "発言:"
             )
         else:
             prompt = (
                 f"{memory_ctx}\n"
                 f"{state_ctx}\n\n"
-                "プレイヤーがしばらく無言です。自然に話題を振ってください。\n"
-                "【重要】状況を説明するのではなく、状況を踏まえてプレイヤーに対し感情的にリアクションしてください。\n"
-                "ルール: 1文・最大30文字・フランク・質問かコメント\n"
+                "プレイヤーがしばらく無言です。自然に話しかけてください。\n"
                 "発言:"
             )
-        return self._call_with_validation(prompt, max_chars=30, growth_hint=growth_hint)
+        return self._call_with_validation(prompt, max_chars=80, growth_hint=growth_hint)
 
     def get_tendency_label(self, event_type: str) -> str | None:
         return TENDENCY_MAP.get(event_type)
@@ -324,21 +318,19 @@ class AICompanion:
         if old_game and new_game:
             prompt = (
                 f"前回は「{old_game}」をプレイしていたが、今日は「{new_game}」に変わった。\n"
-                "ゲームが変わったことを自然に触れながら、今日のプレイへの期待感を込めた挨拶を言ってください。\n"
-                "ルール: 1〜2文・最大50文字・フランク・明るいトーン\n"
+                "ゲームが変わったことに触れながら自然に挨拶してください。\n"
                 "発言:"
             )
         elif new_game:
             prompt = (
                 f"今日は「{new_game}」をプレイするんだね。\n"
-                "軽くテンション上げる挨拶を言ってください。\n"
-                "ルール: 1文・最大40文字・フランク\n"
+                "軽く挨拶してください。\n"
                 "発言:"
             )
         else:
             return random.choice(PROACTIVE_TEMPLATES)
 
-        return self._call_with_validation(prompt, max_chars=50)
+        return self._call_with_validation(prompt, max_chars=80)
 
     # ------------------------------------------------------------------
     # バリデーション
@@ -502,8 +494,8 @@ class AICompanion:
 
         # 直近の応答を繰り返さないようプロンプトに注入
         if self._recent_responses:
-            avoid = "、".join(f"「{r[:20]}」" for r in list(self._recent_responses)[-3:])
-            full_prompt = f"【直前の発言（類似・繰り返し禁止）】{avoid}\n\n{full_prompt}"
+            avoid = "、".join(f"「{r[:20]}」" for r in list(self._recent_responses)[-5:])
+            full_prompt = f"【直前の発言（内容・テーマ・表現すべて繰り返し禁止）】{avoid}\n上記と同じ雰囲気・言葉遣い・テーマは絶対に使わないこと。\n\n{full_prompt}"
 
         for attempt in range(1, MAX_VALIDATE_RETRY + 1):
             raw = self._call_ollama(full_prompt, system_prompt, max_chars)  # type: ignore[arg-type]
