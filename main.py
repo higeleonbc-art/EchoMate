@@ -60,6 +60,7 @@ from user_profile import UserProfile
 from patron_analyzer import PatronAnalyzer
 from observer import ObserverModule
 from sentiment_analyzer import analyze as analyze_sentiment
+from ai_memory import AIMemory
 
 # ---------------------------------------------------------------------------
 # ロギング
@@ -224,6 +225,10 @@ class EchoMate:
 
         # AIにプロファイルを接続（RAG）
         self.ai.set_user_profile(self.user_profile)
+
+        # 長期記憶システム
+        self.ai_memory = AIMemory()
+        self.ai.set_ai_memory(self.ai_memory)
 
         # キャラクター適用
         self._apply_character(character)
@@ -393,6 +398,13 @@ class EchoMate:
                 self.user_profile.save()
         except Exception as e:
             self.logger.error("Session-end analysis error: %s", e)
+
+        # 長期記憶の圧縮・保存
+        try:
+            game = self.user_profile.get_current_game() if hasattr(self.user_profile, "get_current_game") else ""
+            self.ai_memory.compress_and_save(game or "")
+        except Exception as e:
+            self.logger.error("AIMemory compress error: %s", e)
 
         self.logger.info("EchoMate stopped.")
         print("EchoMate stopped.")

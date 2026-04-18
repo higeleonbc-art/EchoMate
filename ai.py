@@ -94,6 +94,7 @@ class AICompanion:
         self._characters: dict = {}
         self.current_character: dict = {}
         self._user_profile: Optional[object] = None   # UserProfile（良き隣人システム）
+        self._ai_memory: Optional[object] = None      # AIMemory（長期記憶システム）
         self._vision_context: str = ""                # 最新の画面解析結果（VisionAnalyzer）
         self._vision_history: list[str] = []          # 直近 VLM 解析履歴（推移把握用）
         self._thinking_callback: Optional[object] = None  # (is_thinking: bool) -> None
@@ -109,6 +110,10 @@ class AICompanion:
     def set_user_profile(self, profile: object) -> None:
         """UserProfile インスタンスを設定する（良き隣人システム連携用）"""
         self._user_profile = profile
+
+    def set_ai_memory(self, memory: object) -> None:
+        """AIMemory インスタンスを設定する（長期記憶システム連携用）"""
+        self._ai_memory = memory
 
     def set_vision_context(self, context: str) -> None:
         """最新の画面解析テキストを設定し、履歴にも追記する（VisionAnalyzer連携用）"""
@@ -234,6 +239,13 @@ class AICompanion:
         self._conversation_history.append({"player": player_input, "ai": response})
         if len(self._conversation_history) > 12:
             self._conversation_history.pop(0)
+
+        # 長期記憶にターンを記録
+        if self._ai_memory is not None:
+            try:
+                self._ai_memory.add_turn(player_input, response)
+            except Exception:
+                pass
 
         return response
 
@@ -434,6 +446,16 @@ class AICompanion:
             lightweight: True の場合 RAG/ビジョン/プロファイルを注入しない（即時リアクション用）
         """
         system_prompt = self.current_character.get("system_prompt", "")
+
+        # 長期記憶を system_prompt 先頭に注入
+        if not lightweight and self._ai_memory is not None:
+            try:
+                long_term = self._ai_memory.get_long_term_context()
+                if long_term:
+                    system_prompt = f"{long_term}\n\n{system_prompt}" if system_prompt else long_term
+            except Exception:
+                pass
+
         rules_text = ""
         if self.current_character.get("rules"):
             rules_text = "ルール:\n" + "\n".join(f"- {r}" for r in self.current_character["rules"])
