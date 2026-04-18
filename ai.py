@@ -217,10 +217,13 @@ class AICompanion:
 
         # ────────────────────────────────────────────
         # プロンプトの核心: 「会話を続ける友達」として返す
+        # 最新発言を === で囲んで目立たせ、モデルが無視するのを防ぐ
         # ────────────────────────────────────────────
+        current_line = f"=== 今プレイヤーが言ったこと（必ずこれに反応する）: {player_input} ===\n"
+
         prompt = (
             f"{history_ctx}"
-            f"プレイヤー: {player_input}\n"
+            f"{current_line}"
             f"あなた{length_hint}: "
         )
 
@@ -228,7 +231,7 @@ class AICompanion:
         if state_note or memory_note or sentiment_line or expand_hint:
             prompt = (
                 f"{history_ctx}"
-                f"プレイヤー: {player_input}\n"
+                f"{current_line}"
                 f"{sentiment_line}{expand_hint}"
                 f"{state_note}{memory_note}\n"
                 f"あなた{length_hint}: "
@@ -456,6 +459,11 @@ class AICompanion:
             except Exception:
                 pass
 
+        # 最新発言への反応を最優先にする常時ルール
+        if not lightweight:
+            topic_rule = "【最重要】プレイヤーの最新発言に必ず反応すること。話題が変わったら即座に切り替え、古い話題を引きずらない。"
+            system_prompt = f"{system_prompt}\n{topic_rule}" if system_prompt else topic_rule
+
         rules_text = ""
         if self.current_character.get("rules"):
             rules_text = "ルール:\n" + "\n".join(f"- {r}" for r in self.current_character["rules"])
@@ -631,10 +639,10 @@ class AICompanion:
         return "\n".join(parts) if parts else "（メモリなし）"
 
     def _build_history_context(self) -> str:
-        """直近6ターンをチャット形式で返す。LLMが「会話の続き」として認識しやすい形式。"""
+        """直近3ターンをチャット形式で返す。古い話題に引きずられないよう意図的に短く保つ。"""
         if not self._conversation_history:
             return ""
-        recent = self._conversation_history[-6:]
+        recent = self._conversation_history[-3:]
         lines = []
         for turn in recent:
             lines.append(f"プレイヤー: {turn['player']}")
