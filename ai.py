@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 OLLAMA_MODEL      = os.environ.get("LLM_MODEL", "qwen3:8b")
 OLLAMA_API_URL    = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/generate")
+OLLAMA_CHAT_URL   = os.environ.get("OLLAMA_CHAT_API_URL", "http://localhost:11434/api/chat")
 OLLAMA_TIMEOUT    = int(os.environ.get("OLLAMA_TIMEOUT", "25"))
 OLLAMA_NUM_PREDICT = 200
 
@@ -94,6 +95,7 @@ class AICompanion:
         self._characters: dict = {}
         self.current_character: dict = {}
         self._user_profile: Optional[object] = None   # UserProfile（良き隣人システム）
+        self._dynamics: Optional[object] = None        # ConversationDynamics（会話力学システム）
         self._ai_memory: Optional[object] = None      # AIMemory（長期記憶システム）
         self._long_term_cache: str = ""               # 長期記憶キャッシュ（セッション開始時に1回読む）
         self._vision_context: str = ""                # 最新の画面解析結果（VisionAnalyzer）
@@ -111,6 +113,13 @@ class AICompanion:
     def set_user_profile(self, profile: object) -> None:
         """UserProfile インスタンスを設定する（良き隣人システム連携用）"""
         self._user_profile = profile
+        # 会話力学システムも初期化（距離感制御）
+        try:
+            from conversation_dynamics import ConversationDynamics
+            self._dynamics = ConversationDynamics(profile)
+            logger.info("ConversationDynamics initialized (stage=%s)", self._dynamics.get_stage_label())
+        except Exception as e:
+            logger.warning("ConversationDynamics init failed: %s", e)
 
     def set_ai_memory(self, memory: object) -> None:
         """AIMemory インスタンスを設定する（長期記憶システム連携用）"""
@@ -202,69 +211,162 @@ class AICompanion:
         growth_hint: Optional[str] = None,
         sentiment_context: Optional[str] = None,
     ) -> str:
-        """プレイヤー発言に対する会話応答を返す"""
-        history_ctx = self._build_history_context()
-        memory_ctx  = self._build_memory_context(memory)
+        """プレイヤー発言に対する会話応答を返す（/api/chat エンドポイントを使用）"""
+        # 会話履歴の汚染チェック: 直近2ターンのAI応答が似ていたら古い方を削除
+        self._prune_repetitive_history()
 
-        tension   = state.to_dict().get("tension", 0.0)       if (state and hasattr(state, "to_dict")) else 0.0
+        memory_ctx = self._build_memory_context(memory)
+
+        tension   = state.to_dict().get("tension", 0.0)         if (state and hasattr(state, "to_dict")) else 0.0
         intensity = state.to_dict().get("input_intensity", 0.0) if (state and hasattr(state, "to_dict")) else 0.0
 
-        # 操作強度に応じた長さ指示
-        length_hint = "（一言で）" if intensity >= 0.5 else ""
+        # ── system プロンプトを構築 ──────────────────────────────────────────
+        sys_parts: list[str] = []
 
-        # 時々話題を広げる（テンションが低く一定確率）
-        expand_hint = ""
-        if tension < 0.4 and not history_ctx and random.random() < 0.3:
-            expand_hint = "\n（最後に相手に何か聞いてもいい）"
+        # 会話力学プロンプト（最上位 — 距離感制御の核心）
+        # echomate-* モデルは Layer 1 が Modelfile に焼き込み済みなので Layer 2 のみ注入
+        if self._dynamics is not None:
+            if self.model.startswith("echomate-"):
+                sys_parts.append(self._dynamics.build_modifier_prompt())
+            else:
+                sys_parts.append(self._dynamics.build_full_dynamics_prompt())
+            # ステージ遷移チェック
+            self._dynamics.check_stage_transition()
+            transition_prompt = self._dynamics.get_transition_prompt()
+            if transition_prompt:
+                sys_parts.append(transition_prompt)
 
-        # 感情文脈（あれば先頭に添える）
-        sentiment_line = f"\n参考（感情トーン）: {sentiment_context}" if sentiment_context else ""
+        # キャラクター人格
+        char_sys = self.current_character.get("system_prompt", "")
+        if char_sys:
+            sys_parts.append(char_sys)
+        if self._long_term_cache:
+            sys_parts.append(self._long_term_cache)
 
-        # ゲーム状態は「補足情報」として末尾に添えるだけ
-        state_ctx = state.summary() if state else ""
-        state_note = f"\n---\n【補足・ゲーム状況】{state_ctx}" if state_ctx else ""
-        memory_note = f"\n【補足・記憶】{memory_ctx}" if memory_ctx and memory_ctx != "（メモリなし）" else ""
+        # ルール・制約
+        if self.current_character.get("rules"):
+            sys_parts.append("ルール:\n" + "\n".join(f"- {r}" for r in self.current_character["rules"]))
+        constraints = self.current_character.get("constraints", {})
+        if constraints:
+            c_lines = []
+            if "must_start" in constraints:
+                c_lines.append(f"【厳命】必ず次のいずれかの言葉で文を書き始めてください（例外なし）: {', '.join(constraints['must_start'])}")
+            if "forbidden" in constraints:
+                c_lines.append(f"以下の言葉は絶対に使わないでください: {', '.join(constraints['forbidden'])}")
+            if "must_include" in constraints:
+                c_lines.append(f"以下の言葉のいずれかを必ず含めてください: {', '.join(constraints['must_include'])}")
+            if constraints.get("no_exclamation"):
+                c_lines.append("「！」（感嘆符）は絶対に使わないでください。")
+            if "must_sequence" in constraints:
+                c_lines.append(f"次の順番で内容を構成してください: {' -> '.join(constraints['must_sequence'])}")
+            if constraints.get("must_include_advice"):
+                c_lines.append("必ずプレイヤーへの具体的な助言や行動指示を含めてください。")
+            if c_lines:
+                sys_parts.append("【制約事項】\n" + "\n".join(f"- {c}" for c in c_lines))
 
-        # 今セッションの過去の話題（会話履歴ウィンドウ外）を補足として取得
-        session_ctx_note = ""
+        # 常時ルール
+        sys_parts.append("【最重要】プレイヤーの最新発言に必ず反応すること。話題が変わったら即座に切り替え、古い話題を引きずらない。")
+        sys_parts.append("プレイヤーの言葉をそのまま繰り返してはいけない。必ず自分の言葉で返すこと。")
+        sys_parts.append("「〇〇は無理？」「〇〇できる？」のような確認・テスト質問を連続して繰り返すことは絶対禁止。プレイヤーが肯定したらその件は終了し次の話題に移れ。否定されたら深追いせず話題を変えろ。")
+        if intensity >= 0.5:
+            sys_parts.append("（一言で簡潔に返すこと）")
+
+        # RAG: プロファイル・ゲーム知識・画面状況
+        profile_ctx = self._build_profile_context()
+        if profile_ctx:
+            sys_parts.append(profile_ctx)
+        game_knowledge_ctx = self._build_game_knowledge_context()
+        if game_knowledge_ctx:
+            sys_parts.append(game_knowledge_ctx)
+        if self._vision_history:
+            if len(self._vision_history) >= 2:
+                history_lines = " → ".join(f"[{i + 1}]{ctx}" for i, ctx in enumerate(self._vision_history))
+                sys_parts.append(f"【画面推移】{history_lines}")
+            else:
+                sys_parts.append(f"【画面状況】{self._vision_history[-1]}")
+
+        # プレイスタイルに応じたトーン補正
+        if self._user_profile is not None:
+            try:
+                labels = self._user_profile.get().get("playstyle_labels", [])
+                tone_hints = []
+                if "ゴリ押し" in labels:
+                    tone_hints.append("もっとイケイケな口調で応援しろ")
+                if "慎重" in labels:
+                    tone_hints.append("一歩引いた視点で分析しろ")
+                if tone_hints:
+                    sys_parts.append(f"【トーン指示】{' / '.join(tone_hints)}")
+            except Exception:
+                pass
+
+        # 感情トーン・観察メモ・会話拡張ヒント
+        if sentiment_context:
+            sys_parts.append(f"参考（感情トーン）: {sentiment_context}")
+        if growth_hint:
+            sys_parts.append(f"（観察メモ: {growth_hint}）")
+        if tension < 0.4 and not self._conversation_history and random.random() < 0.3:
+            sys_parts.append("（最後に相手に何か聞いてもいい）")
+
+        # セッション内の過去の話題（会話履歴ウィンドウ外）
         if self._ai_memory is not None:
             try:
                 session_ctx = self._ai_memory.get_session_context(skip_recent=3, limit=5)
                 if session_ctx:
-                    session_ctx_note = f"\n{session_ctx}"
+                    sys_parts.append(session_ctx)
             except Exception:
                 pass
 
-        # ────────────────────────────────────────────
-        # プロンプトの核心: 「会話を続ける友達」として返す
-        # 最新発言を === で囲んで目立たせ、モデルが無視するのを防ぐ
-        # ────────────────────────────────────────────
-        current_line = f"=== 今プレイヤーが言ったこと（必ずこれに反応する）: {player_input} ===\n"
+        # ゲーム状況・記憶
+        state_ctx = state.summary() if state else ""
+        if state_ctx:
+            sys_parts.append(f"【補足・ゲーム状況】{state_ctx}")
+        if memory_ctx and memory_ctx != "（メモリなし）":
+            sys_parts.append(f"【補足・記憶】{memory_ctx}")
 
-        prompt = (
-            f"{history_ctx}"
-            f"{current_line}"
-            f"あなた{length_hint}: "
-        )
+        # 繰り返し防止
+        if self._recent_responses:
+            avoid = "、".join(f"「{r[:20]}」" for r in list(self._recent_responses)[-5:])
+            sys_parts.append(f"【絶対禁止】直前の発言と同じ内容・テーマ・表現を繰り返すな。禁止発言: {avoid}")
 
-        # 補足情報は system_prompt 側に含める形で末尾に付ける
-        if state_note or memory_note or sentiment_line or expand_hint or session_ctx_note:
-            prompt = (
-                f"{history_ctx}"
-                f"{current_line}"
-                f"{sentiment_line}{expand_hint}"
-                f"{session_ctx_note}"
-                f"{state_note}{memory_note}\n"
-                f"あなた{length_hint}: "
-            )
+        system_prompt = "\n\n".join(filter(None, sys_parts))
 
-        response = self._call_with_validation(prompt, max_chars=120, growth_hint=growth_hint)
+        # ── messages を構築（会話履歴 + 現在のプレイヤー発言）─────────────────
+        messages: list[dict] = []
+        for turn in self._conversation_history[-3:]:
+            messages.append({"role": "user",      "content": turn["player"]})
+            messages.append({"role": "assistant", "content": turn["ai"]})
+        messages.append({"role": "user", "content": player_input})
 
+        # ── Chat API を呼び出し・バリデーション・繰り返し検出・エコー除去 ──────────
+        response = ""
+        _CHAT_MAX_RETRY = max(MAX_VALIDATE_RETRY, 5)
+        for attempt in range(1, _CHAT_MAX_RETRY + 1):
+            raw = self._call_ollama_chat(messages, system_prompt, max_chars=120)
+            raw = self._remove_echo_prefix(raw, player_input)
+            if raw in self._recent_responses or self._is_near_duplicate(raw):
+                logger.warning("Repetition/near-dup detected %r, retrying (%d/%d)", raw[:30], attempt, _CHAT_MAX_RETRY)
+                continue
+            if self.validate_response(raw):
+                if attempt > 1:
+                    logger.debug("Chat validation passed on attempt %d", attempt)
+                response = raw
+                break
+            logger.debug("Chat validation failed (attempt %d/%d): %s", attempt, _CHAT_MAX_RETRY, raw)
+        else:
+            logger.warning("All %d chat attempts failed/repeated, using fallback", _CHAT_MAX_RETRY)
+            available = [f for f in FALLBACK_RESPONSES if f not in self._recent_responses]
+            response = random.choice(available if available else FALLBACK_RESPONSES)
+
+        self._recent_responses.append(response)
+
+        is_fallback = response in FALLBACK_RESPONSES
         self._conversation_history.append({"player": player_input, "ai": response})
+        if is_fallback and len(self._conversation_history) > 0:
+            # フォールバック応答は会話履歴から除外してモデルへの汚染を防ぐ
+            self._conversation_history.pop()
         if len(self._conversation_history) > 12:
             self._conversation_history.pop(0)
 
-        # 長期記憶にターンを記録
         if self._ai_memory is not None:
             try:
                 self._ai_memory.add_turn(player_input, response)
@@ -471,9 +573,18 @@ class AICompanion:
         """
         system_prompt = self.current_character.get("system_prompt", "")
 
-        # 長期記憶をキャッシュから system_prompt 先頭に注入（DB アクセスなし）
+        # 会話力学プロンプトを先頭に注入（距離感制御の核心）
+        # echomate-* モデルは Layer 1 が Modelfile に焼き込み済みなので Layer 2 のみ注入
+        if not lightweight and self._dynamics is not None:
+            if self.model.startswith("echomate-"):
+                dynamics_prompt = self._dynamics.build_modifier_prompt()
+            else:
+                dynamics_prompt = self._dynamics.build_full_dynamics_prompt()
+            system_prompt = f"{dynamics_prompt}\n\n{system_prompt}" if system_prompt else dynamics_prompt
+
+        # 長期記憶を注入
         if not lightweight and self._long_term_cache:
-            system_prompt = f"{self._long_term_cache}\n\n{system_prompt}" if system_prompt else self._long_term_cache
+            system_prompt = f"{system_prompt}\n\n{self._long_term_cache}" if system_prompt else self._long_term_cache
 
         # 最新発言への反応を最優先にする常時ルール
         if not lightweight:
@@ -487,16 +598,6 @@ class AICompanion:
         prefix_parts = []
 
         if not lightweight:
-            # bond_level が高い場合、大親友ルールを動的注入
-            if self._user_profile is not None:
-                try:
-                    bond = self._user_profile.get_bond_level()
-                    if bond >= 0.7:
-                        friend_rule = "【最重要】あなたはこのプレイヤーの大親友です。極めてフランクに、遠慮なく、親しみを込めて話してください。"
-                        system_prompt = f"{friend_rule}\n{system_prompt}" if system_prompt else friend_rule
-                except Exception:
-                    pass
-
             # ユーザープロファイルを先頭に注入（RAG）
             profile_ctx = self._build_profile_context()
             game_knowledge_ctx = self._build_game_knowledge_context()
@@ -628,12 +729,85 @@ class AICompanion:
                 except Exception:
                     pass
 
+    def _call_ollama_chat(self, messages: list[dict], system_prompt: str, max_chars: int) -> str:
+        """Ollama /api/chat エンドポイントを呼び出す（chat モデル向け）。"""
+        if self._thinking_callback:
+            try:
+                self._thinking_callback(True)
+            except Exception:
+                pass
+        start = time.time()
+        try:
+            all_messages: list[dict] = []
+            if system_prompt:
+                all_messages.append({"role": "system", "content": system_prompt})
+            all_messages.extend(messages)
+
+            payload: dict = {
+                "model":  self.model,
+                "messages": all_messages,
+                "stream": False,
+                "think":  False,
+                "options": {
+                    "num_predict":    OLLAMA_NUM_PREDICT,
+                    "temperature":    0.8,
+                    "top_p":          0.9,
+                    "repeat_penalty": 1.3,
+                    "repeat_last_n":  64,
+                },
+            }
+
+            res = httpx.post(OLLAMA_CHAT_URL, json=payload, timeout=OLLAMA_TIMEOUT)
+            elapsed = time.time() - start
+            logger.debug("Ollama chat responded in %.2fs", elapsed)
+
+            if res.status_code != 200:
+                logger.error("Ollama Chat HTTP %d: %s", res.status_code, res.text[:100])
+                return random.choice(FALLBACK_RESPONSES)
+
+            raw = res.json().get("message", {}).get("content", "")
+            return self._clean(raw, max_chars)
+
+        except httpx.ConnectError:
+            logger.error("Ollama not running at %s", OLLAMA_CHAT_URL)
+            return "（AI未接続）"
+        except httpx.TimeoutException:
+            logger.warning("Ollama chat timed out after %ds", OLLAMA_TIMEOUT)
+            return "ちょっと待って"
+        except Exception as e:
+            logger.error("Ollama chat error: %s", e)
+            return random.choice(FALLBACK_RESPONSES)
+        finally:
+            if self._thinking_callback:
+                try:
+                    self._thinking_callback(False)
+                except Exception:
+                    pass
+
+    def _remove_echo_prefix(self, response: str, player_input: str) -> str:
+        """
+        モデルがプレイヤー発言を先頭に繰り返すパターン（例: 「{player}？ {実際の返答}」）を除去する。
+        純粋なエコー（残りがない）場合はフォールバックを返す。
+        """
+        r = response.strip()
+        # 末尾の句読点を取り除いた player_input でプレフィックス一致を確認
+        p = player_input.strip().rstrip("？?。！!、, 　")
+        if not p or not r.startswith(p):
+            return response
+        suffix = r[len(p):].lstrip("？?。！!、, 　").strip()
+        if suffix:
+            logger.warning("Echo prefix stripped: %r → %r", r[:40], suffix[:40])
+            return suffix
+        # 残りがない = 純粋なエコー
+        logger.warning("Pure echo detected, using fallback")
+        return random.choice(FALLBACK_RESPONSES)
+
     @staticmethod
     def _clean(raw: str, max_chars: int) -> str:
         """<think> タグ除去・先頭行抽出・文末で自然に切り詰め"""
         # <think>タグと「返答:」「あなた:」などのプレフィックスを除去
         cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-        cleaned = re.sub(r"^(返答|あなた|AI|エコー|ミチコ|キッド|レイ|リュウ|アカネ)[:：]\s*", "", cleaned).strip()
+        cleaned = re.sub(r"^(返答|あなた|AI|エコー|ミチコ|キッド|レイ|リュウ|アカネ|プレイヤー|Player|相棒)[:：]\s*", "", cleaned).strip()
         first_line = cleaned.split("\n")[0].strip()
         if len(first_line) <= max_chars:
             return first_line or "..."
@@ -664,3 +838,42 @@ class AICompanion:
             lines.append(f"プレイヤー: {turn['player']}")
             lines.append(f"あなた: {turn['ai']}")
         return "\n".join(lines) + "\n"
+
+    def _is_near_duplicate(self, response: str, threshold: float = 0.58) -> bool:
+        """直近の応答と文字集合レベルで重複しているか判定する（意味的繰り返し検出）。"""
+        r_chars = set(response.strip())
+        if not r_chars:
+            return False
+        for prev in list(self._recent_responses)[-3:]:
+            p_chars = set(prev.strip())
+            if not p_chars:
+                continue
+            overlap = len(r_chars & p_chars) / max(len(r_chars), len(p_chars))
+            if overlap >= threshold:
+                return True
+        return False
+
+    def _prune_repetitive_history(self) -> None:
+        """会話履歴のAI応答が同一パターンに汚染されていたら削除する。
+        2ペア以上重複 → 直近3ターンを全削除、1ペアのみ → 古い方1件を削除。"""
+        if len(self._conversation_history) < 2:
+            return
+        recent = self._conversation_history[-4:]
+        ai_responses = [t["ai"] for t in recent]
+        dup_pairs = 0
+        for i in range(len(ai_responses) - 1):
+            a_chars = set(ai_responses[i].strip())
+            b_chars = set(ai_responses[i + 1].strip())
+            if not a_chars or not b_chars:
+                continue
+            overlap = len(a_chars & b_chars) / max(len(a_chars), len(b_chars))
+            if overlap >= 0.5:
+                dup_pairs += 1
+        if dup_pairs >= 2:
+            keep = self._conversation_history[:-3] if len(self._conversation_history) > 3 else []
+            removed = len(self._conversation_history) - len(keep)
+            self._conversation_history[:] = keep
+            logger.warning("Heavy history contamination (%d dup pairs) — cleared %d entries", dup_pairs, removed)
+        elif dup_pairs == 1:
+            removed_entry = self._conversation_history.pop(-2)
+            logger.debug("Pruned 1 repetitive history entry: %r", removed_entry["ai"][:30])

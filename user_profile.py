@@ -278,6 +278,23 @@ class UserProfile:
         with self._lock:
             return float(self._data.get("bond_level", 0.0))
 
+    def get_bond_stage(self) -> str:
+        """現在のbond_levelからステージ名を返す"""
+        bond = self.get_bond_level()
+        if bond >= 0.70:
+            return "close_friend"
+        if bond >= 0.30:
+            return "friend"
+        return "acquaintance"
+
+    def get_bond_stage_label(self) -> str:
+        """日本語のステージ名を返す（UIやログ用）"""
+        return {
+            "acquaintance": "知り合い",
+            "friend": "友達",
+            "close_friend": "親友",
+        }[self.get_bond_stage()]
+
     def add_playstyle_label(self, label: str) -> None:
         """プレイスタイルラベルを追加する（重複なし・最大5件）"""
         with self._lock:
