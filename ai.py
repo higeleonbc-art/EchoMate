@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 OLLAMA_MODEL      = os.environ.get("LLM_MODEL", "qwen3:8b")
 OLLAMA_API_URL    = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/generate")
 OLLAMA_TIMEOUT    = int(os.environ.get("OLLAMA_TIMEOUT", "25"))
-OLLAMA_NUM_PREDICT = 256
+OLLAMA_NUM_PREDICT = 200
 
 MAX_VALIDATE_RETRY = 3   # validate_response 失敗時の最大再生成回数
 
@@ -188,34 +188,51 @@ class AICompanion:
         sentiment_context: Optional[str] = None,
     ) -> str:
         """プレイヤー発言に対する会話応答を返す"""
-        memory_ctx  = self._build_memory_context(memory)
         history_ctx = self._build_history_context()
-        state_ctx   = state.summary() if state else "（状態情報なし）"
+        memory_ctx  = self._build_memory_context(memory)
 
-        sentiment_line = f"{sentiment_context}\n" if sentiment_context else ""
-        tension = state.to_dict().get("tension", 0.0) if (state and hasattr(state, "to_dict")) else 0.0
+        tension   = state.to_dict().get("tension", 0.0)       if (state and hasattr(state, "to_dict")) else 0.0
         intensity = state.to_dict().get("input_intensity", 0.0) if (state and hasattr(state, "to_dict")) else 0.0
 
-        extra = ""
-        if intensity >= 0.5:
-            extra = "\nプレイヤーは今激しく操作中なので短めに。"
-        elif tension < 0.4 and random.random() < 0.3:
-            extra = "\n最後に話題を広げる一言を添えてください。"
+        # 操作強度に応じた長さ指示
+        length_hint = "（一言で）" if intensity >= 0.5 else ""
 
+        # 時々話題を広げる（テンションが低く一定確率）
+        expand_hint = ""
+        if tension < 0.4 and not history_ctx and random.random() < 0.3:
+            expand_hint = "\n（最後に相手に何か聞いてもいい）"
+
+        # 感情文脈（あれば先頭に添える）
+        sentiment_line = f"\n参考（感情トーン）: {sentiment_context}" if sentiment_context else ""
+
+        # ゲーム状態は「補足情報」として末尾に添えるだけ
+        state_ctx = state.summary() if state else ""
+        state_note = f"\n---\n【補足・ゲーム状況】{state_ctx}" if state_ctx else ""
+        memory_note = f"\n【補足・記憶】{memory_ctx}" if memory_ctx and memory_ctx != "（メモリなし）" else ""
+
+        # ────────────────────────────────────────────
+        # プロンプトの核心: 「会話を続ける友達」として返す
+        # ────────────────────────────────────────────
         prompt = (
-            f"{memory_ctx}\n\n"
-            f"現在の状態:\n{state_ctx}\n\n"
-            f"{history_ctx}\n"
-            f"{sentiment_line}"
-            f"プレイヤーの発言:「{player_input}」\n\n"
-            f"上記に対して自然に返答してください。{extra}\n"
-            "返答:"
+            f"{history_ctx}"
+            f"プレイヤー: {player_input}\n"
+            f"あなた{length_hint}: "
         )
 
-        response = self._call_with_validation(prompt, max_chars=80, growth_hint=growth_hint)
+        # 補足情報は system_prompt 側に含める形で末尾に付ける
+        if state_note or memory_note or sentiment_line or expand_hint:
+            prompt = (
+                f"{history_ctx}"
+                f"プレイヤー: {player_input}\n"
+                f"{sentiment_line}{expand_hint}"
+                f"{state_note}{memory_note}\n"
+                f"あなた{length_hint}: "
+            )
+
+        response = self._call_with_validation(prompt, max_chars=120, growth_hint=growth_hint)
 
         self._conversation_history.append({"player": player_input, "ai": response})
-        if len(self._conversation_history) > 10:
+        if len(self._conversation_history) > 12:
             self._conversation_history.pop(0)
 
         return response
@@ -402,7 +419,7 @@ class AICompanion:
     def _call_with_validation(
         self,
         prompt: str,
-        max_chars: int = 40,
+        max_chars: int = 100,
         growth_hint: Optional[str] = None,
         lightweight: bool = False,
     ) -> str:
@@ -563,10 +580,19 @@ class AICompanion:
 
     @staticmethod
     def _clean(raw: str, max_chars: int) -> str:
-        """<think> タグ除去・先頭行抽出・文字数切り詰め"""
+        """<think> タグ除去・先頭行抽出・文末で自然に切り詰め"""
+        # <think>タグと「返答:」「あなた:」などのプレフィックスを除去
         cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+        cleaned = re.sub(r"^(返答|あなた|AI|エコー|ミチコ|キッド|レイ|リュウ|アカネ)[:：]\s*", "", cleaned).strip()
         first_line = cleaned.split("\n")[0].strip()
-        return first_line[:max_chars] if len(first_line) > max_chars else (first_line or "...")
+        if len(first_line) <= max_chars:
+            return first_line or "..."
+        # max_chars を超える場合、最後の「。」「！」「？」で自然に切り詰める
+        truncated = first_line[:max_chars]
+        last_punct = max(truncated.rfind("。"), truncated.rfind("！"), truncated.rfind("？"), truncated.rfind("."))
+        if last_punct > max_chars // 2:
+            return truncated[:last_punct + 1]
+        return truncated
 
     def _build_memory_context(self, memory: dict) -> str:
         parts = []
@@ -579,10 +605,12 @@ class AICompanion:
         return "\n".join(parts) if parts else "（メモリなし）"
 
     def _build_history_context(self) -> str:
+        """直近6ターンをチャット形式で返す。LLMが「会話の続き」として認識しやすい形式。"""
         if not self._conversation_history:
             return ""
-        lines = [
-            f"  P:「{t['player']}」 → AI:「{t['ai']}」"
-            for t in self._conversation_history[-2:]
-        ]
-        return "直近の会話:\n" + "\n".join(lines)
+        recent = self._conversation_history[-6:]
+        lines = []
+        for turn in recent:
+            lines.append(f"プレイヤー: {turn['player']}")
+            lines.append(f"あなた: {turn['ai']}")
+        return "\n".join(lines) + "\n"
