@@ -224,7 +224,8 @@ class AICompanion:
         sys_parts: list[str] = []
 
         # 会話力学プロンプト（最上位 — 距離感制御の核心）
-        # echomate-* モデルは Layer 1 が Modelfile に焼き込み済みなので Layer 2 のみ注入
+        # echomate-* は Modelfile に Layer 1 焼き込み済みのため Layer 2 のみ注入
+        # 非echomate は full dynamics（Layer 1+2）を動的注入
         if self._dynamics is not None:
             if self.model.startswith("echomate-"):
                 sys_parts.append(self._dynamics.build_modifier_prompt())
@@ -574,9 +575,10 @@ class AICompanion:
         system_prompt = self.current_character.get("system_prompt", "")
 
         # 会話力学プロンプトを先頭に注入（距離感制御の核心）
-        # echomate-* モデルは Layer 1 が Modelfile に焼き込み済みなので Layer 2 のみ注入
-        if not lightweight and self._dynamics is not None:
-            if self.model.startswith("echomate-"):
+        # echomate-* は Layer 1 が Modelfile 焼き込み済みのため Layer 2 のみ注入
+        # lightweight 時も Layer 2（モディファイア）は注入してキャラ距離感を維持（問題3対応）
+        if self._dynamics is not None:
+            if self.model.startswith("echomate-") or lightweight:
                 dynamics_prompt = self._dynamics.build_modifier_prompt()
             else:
                 dynamics_prompt = self._dynamics.build_full_dynamics_prompt()
@@ -591,9 +593,29 @@ class AICompanion:
             topic_rule = "【最重要】プレイヤーの最新発言に必ず反応すること。話題が変わったら即座に切り替え、古い話題を引きずらない。"
             system_prompt = f"{system_prompt}\n{topic_rule}" if system_prompt else topic_rule
 
-        rules_text = ""
+        # キャラクタールール・制約を system_prompt へ（get_response との一貫性、問題2対応）
         if self.current_character.get("rules"):
             rules_text = "ルール:\n" + "\n".join(f"- {r}" for r in self.current_character["rules"])
+            system_prompt = f"{system_prompt}\n\n{rules_text}" if system_prompt else rules_text
+
+        constraints = self.current_character.get("constraints", {})
+        if constraints:
+            constraint_lines = []
+            if "must_start" in constraints:
+                constraint_lines.append(f"【厳命】必ず次のいずれかの言葉で文を書き始めてください（例外なし）: {', '.join(constraints['must_start'])}")
+            if "forbidden" in constraints:
+                constraint_lines.append(f"以下の言葉は絶対に使わないでください: {', '.join(constraints['forbidden'])}")
+            if "must_include" in constraints:
+                constraint_lines.append(f"以下の言葉のいずれかを必ず含めてください: {', '.join(constraints['must_include'])}")
+            if constraints.get("no_exclamation"):
+                constraint_lines.append("「！」（感嘆符）は絶対に使わないでください。")
+            if "must_sequence" in constraints:
+                constraint_lines.append(f"次の順番で内容を構成してください: {' -> '.join(constraints['must_sequence'])}")
+            if constraints.get("must_include_advice"):
+                constraint_lines.append("必ずプレイヤーへの具体的な助言や行動指示を含めてください。")
+            if constraint_lines:
+                c_text = "【制約事項】\n" + "\n".join(f"- {c}" for c in constraint_lines)
+                system_prompt = f"{system_prompt}\n\n{c_text}" if system_prompt else c_text
 
         prefix_parts = []
 
@@ -617,30 +639,7 @@ class AICompanion:
                 prefix_parts.append(f"（観察メモ: {growth_hint}）")
 
         prefix = "\n".join(prefix_parts)
-
-        # キャラクター制約を動的にプロンプトへ注入
-        constraints = self.current_character.get("constraints", {})
-        if constraints:
-            constraint_lines = []
-            if "must_start" in constraints:
-                constraint_lines.append(f"【厳命】必ず次のいずれかの言葉で文を書き始めてください（例外なし）: {', '.join(constraints['must_start'])}")
-            if "forbidden" in constraints:
-                constraint_lines.append(f"以下の言葉は絶対に使わないでください: {', '.join(constraints['forbidden'])}")
-            if "must_include" in constraints:
-                constraint_lines.append(f"以下の言葉のいずれかを必ず含めてください: {', '.join(constraints['must_include'])}")
-            if constraints.get("no_exclamation"):
-                constraint_lines.append("「！」（感嘆符）は絶対に使わないでください。")
-            if "must_sequence" in constraints:
-                constraint_lines.append(f"次の順番で内容を構成してください: {' -> '.join(constraints['must_sequence'])}")
-            if constraints.get("must_include_advice"):
-                constraint_lines.append("必ずプレイヤーへの具体的な助言や行動指示を含めてください。")
-            
-            if constraint_lines:
-                c_text = "【制約事項】\n" + "\n".join(f"- {c}" for c in constraint_lines)
-                rules_text = f"{rules_text}\n\n{c_text}" if rules_text else c_text
-
-        base_prompt = f"{rules_text}\n\n{prompt}" if rules_text else prompt
-        full_prompt  = f"{prefix}\n\n{base_prompt}" if prefix else base_prompt
+        full_prompt = f"{prefix}\n\n{prompt}" if prefix else prompt
 
         # プレイスタイルに応じたトーン補正（軽量モード時はスキップ）
         if not lightweight and self._user_profile is not None:
