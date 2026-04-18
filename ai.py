@@ -641,7 +641,7 @@ class AICompanion:
         prefix = "\n".join(prefix_parts)
         full_prompt = f"{prefix}\n\n{prompt}" if prefix else prompt
 
-        # プレイスタイルに応じたトーン補正（軽量モード時はスキップ）
+        # プレイスタイルに応じたトーン補正（軽量モード時はスキップ、system_prompt側に注入）
         if not lightweight and self._user_profile is not None:
             try:
                 labels = self._user_profile.get().get("playstyle_labels", [])
@@ -651,7 +651,8 @@ class AICompanion:
                 if "慎重" in labels:
                     tone_hints.append("一歩引いた視点で分析しろ")
                 if tone_hints:
-                    full_prompt = f"【トーン指示: {' / '.join(tone_hints)}】\n{full_prompt}"
+                    hint = f"【トーン指示】{' / '.join(tone_hints)}"
+                    system_prompt = f"{system_prompt}\n{hint}" if system_prompt else hint
             except Exception:
                 pass
 
@@ -826,17 +827,6 @@ class AICompanion:
         if memory.get("recent_topics"):
             parts.append(f"最近の話題: {'、'.join(memory['recent_topics'][-3:])}")
         return "\n".join(parts) if parts else "（メモリなし）"
-
-    def _build_history_context(self) -> str:
-        """直近3ターンをチャット形式で返す。古い話題に引きずられないよう意図的に短く保つ。"""
-        if not self._conversation_history:
-            return ""
-        recent = self._conversation_history[-3:]
-        lines = []
-        for turn in recent:
-            lines.append(f"プレイヤー: {turn['player']}")
-            lines.append(f"あなた: {turn['ai']}")
-        return "\n".join(lines) + "\n"
 
     def _is_near_duplicate(self, response: str, threshold: float = 0.58) -> bool:
         """直近の応答と文字集合レベルで重複しているか判定する（意味的繰り返し検出）。"""

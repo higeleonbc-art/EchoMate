@@ -730,8 +730,8 @@ class EchoMate:
         if event.event_type == "death":
             self.observer.record_death()
 
-        # step1: 即時リアクション
-        reaction = self.ai.get_reaction(event.event_type, state, use_template=False)
+        # step1: 即時リアクション（60%テンプレート高速応答 / 40%LLM自然応答）
+        reaction = self.ai.get_reaction(event.event_type, state, use_template=random.random() < 0.6)
 
         # 安全フィルター
         tension      = state.to_dict().get("tension", 0.0) if hasattr(state, "to_dict") else 0.0
