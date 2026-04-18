@@ -531,10 +531,12 @@ class AICompanion:
             except Exception:
                 pass
 
-        # 直近の応答を繰り返さないようプロンプトに注入
+        # 直近の応答をシステムプロンプトに注入して繰り返しを防ぐ
+        # （ユーザープロンプトより system_prompt 側が LLM に強く効く）
         if self._recent_responses:
             avoid = "、".join(f"「{r[:20]}」" for r in list(self._recent_responses)[-5:])
-            full_prompt = f"【直前の発言（内容・テーマ・表現すべて繰り返し禁止）】{avoid}\n上記と同じ雰囲気・言葉遣い・テーマは絶対に使わないこと。\n\n{full_prompt}"
+            anti_repeat = f"【絶対禁止】直前の発言と同じ内容・テーマ・表現を繰り返すな。禁止発言: {avoid}"
+            system_prompt = f"{system_prompt}\n{anti_repeat}" if system_prompt else anti_repeat
 
         for attempt in range(1, MAX_VALIDATE_RETRY + 1):
             raw = self._call_ollama(full_prompt, system_prompt, max_chars)  # type: ignore[arg-type]
@@ -565,9 +567,11 @@ class AICompanion:
                 "stream": False,
                 "think":  False,
                 "options": {
-                    "num_predict": OLLAMA_NUM_PREDICT,
-                    "temperature": 0.8,
-                    "top_p":       0.9,
+                    "num_predict":    OLLAMA_NUM_PREDICT,
+                    "temperature":    0.8,
+                    "top_p":          0.9,
+                    "repeat_penalty": 1.3,
+                    "repeat_last_n":  64,
                 },
             }
             if system_prompt:
