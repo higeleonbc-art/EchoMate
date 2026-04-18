@@ -95,6 +95,7 @@ class AICompanion:
         self.current_character: dict = {}
         self._user_profile: Optional[object] = None   # UserProfile（良き隣人システム）
         self._ai_memory: Optional[object] = None      # AIMemory（長期記憶システム）
+        self._long_term_cache: str = ""               # 長期記憶キャッシュ（セッション開始時に1回読む）
         self._vision_context: str = ""                # 最新の画面解析結果（VisionAnalyzer）
         self._vision_history: list[str] = []          # 直近 VLM 解析履歴（推移把握用）
         self._thinking_callback: Optional[object] = None  # (is_thinking: bool) -> None
@@ -114,6 +115,15 @@ class AICompanion:
     def set_ai_memory(self, memory: object) -> None:
         """AIMemory インスタンスを設定する（長期記憶システム連携用）"""
         self._ai_memory = memory
+        # セッション開始時に1回だけ長期記憶を読み込んでキャッシュする
+        # （セッション中に ai_memory.db は変化しないため毎回読む必要がない）
+        self._long_term_cache: str = ""
+        try:
+            self._long_term_cache = memory.get_long_term_context()  # type: ignore[union-attr]
+            if self._long_term_cache:
+                logger.info("Long-term memory loaded (%d chars)", len(self._long_term_cache))
+        except Exception:
+            pass
 
     def set_vision_context(self, context: str) -> None:
         """最新の画面解析テキストを設定し、履歴にも追記する（VisionAnalyzer連携用）"""
@@ -450,14 +460,9 @@ class AICompanion:
         """
         system_prompt = self.current_character.get("system_prompt", "")
 
-        # 長期記憶を system_prompt 先頭に注入
-        if not lightweight and self._ai_memory is not None:
-            try:
-                long_term = self._ai_memory.get_long_term_context()
-                if long_term:
-                    system_prompt = f"{long_term}\n\n{system_prompt}" if system_prompt else long_term
-            except Exception:
-                pass
+        # 長期記憶をキャッシュから system_prompt 先頭に注入（DB アクセスなし）
+        if not lightweight and self._long_term_cache:
+            system_prompt = f"{self._long_term_cache}\n\n{system_prompt}" if system_prompt else self._long_term_cache
 
         # 最新発言への反応を最優先にする常時ルール
         if not lightweight:
