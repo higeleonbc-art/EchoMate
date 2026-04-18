@@ -91,6 +91,32 @@ class AIMemory:
                 (self.session_id, time.time(), player_text, ai_text, int(is_noise)),
             )
 
+    def get_session_context(self, skip_recent: int = 3, limit: int = 5) -> str:
+        """
+        今セッションの会話履歴のうち、直近 skip_recent 件を除いた過去の話題を返す。
+        会話履歴ウィンドウ（3ターン）では見えなくなった話題を復活させるために使う。
+
+        Args:
+            skip_recent: AIの会話履歴ウィンドウと重複しないようスキップする件数
+            limit:       返す最大件数（古い順）
+        """
+        with sqlite3.connect(self._temp_db) as conn:
+            # 新しい順で skip_recent+limit 件取得し、古い skip_recent 件を除外する
+            rows = conn.execute(
+                "SELECT player_text, ai_text FROM turns "
+                "WHERE session_id=? AND is_noise=0 "
+                "ORDER BY timestamp DESC LIMIT ?",
+                (self.session_id, skip_recent + limit),
+            ).fetchall()
+
+        # 直近 skip_recent 件は会話履歴と重複するので除外、残りを時系列順に戻す
+        older = list(reversed(rows[skip_recent:]))
+        if not older:
+            return ""
+
+        lines = [f"P: {p[:50]}  A: {a[:50]}" for p, a in older]
+        return "【今セッションの過去の話題】\n" + "\n".join(lines)
+
     def get_long_term_context(self) -> str:
         """
         長期記憶DBから直近セッションの要約とknown_factsを取得し、

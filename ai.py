@@ -225,6 +225,16 @@ class AICompanion:
         state_note = f"\n---\n【補足・ゲーム状況】{state_ctx}" if state_ctx else ""
         memory_note = f"\n【補足・記憶】{memory_ctx}" if memory_ctx and memory_ctx != "（メモリなし）" else ""
 
+        # 今セッションの過去の話題（会話履歴ウィンドウ外）を補足として取得
+        session_ctx_note = ""
+        if self._ai_memory is not None:
+            try:
+                session_ctx = self._ai_memory.get_session_context(skip_recent=3, limit=5)
+                if session_ctx:
+                    session_ctx_note = f"\n{session_ctx}"
+            except Exception:
+                pass
+
         # ────────────────────────────────────────────
         # プロンプトの核心: 「会話を続ける友達」として返す
         # 最新発言を === で囲んで目立たせ、モデルが無視するのを防ぐ
@@ -238,11 +248,12 @@ class AICompanion:
         )
 
         # 補足情報は system_prompt 側に含める形で末尾に付ける
-        if state_note or memory_note or sentiment_line or expand_hint:
+        if state_note or memory_note or sentiment_line or expand_hint or session_ctx_note:
             prompt = (
                 f"{history_ctx}"
                 f"{current_line}"
                 f"{sentiment_line}{expand_hint}"
+                f"{session_ctx_note}"
                 f"{state_note}{memory_note}\n"
                 f"あなた{length_hint}: "
             )
