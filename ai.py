@@ -147,7 +147,7 @@ class AICompanion:
             logger.warning("Character '%s' not found, falling back to '%s'", name, DEFAULT_CHARACTER)
             char = self._characters.get(DEFAULT_CHARACTER, {})
         self.current_character = char
-        logger.info("Character set: %s", char.get("name", name))
+        logger.debug("Character set: %s", char.get("name", name))
         return char
 
     def list_characters(self) -> list[str]:

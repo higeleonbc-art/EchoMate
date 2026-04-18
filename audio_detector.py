@@ -135,9 +135,9 @@ class AudioDetector:
                 config = json.load(f)
             raw_rules = config.get("audio_rules", [])
             self.rules = [r for r in raw_rules if r.get("enabled", True)]
-            logger.info("Audio rules loaded: %d active rules", len(self.rules))
+            logger.debug("Audio rules loaded: %d active rules", len(self.rules))
         except FileNotFoundError:
-            logger.info("cv_config.json not found, using default audio rule")
+            logger.debug("cv_config.json not found, using default audio rule")
             self.rules = self._default_rules()
         except (json.JSONDecodeError, KeyError) as e:
             logger.error("Audio rule load error: %s — using defaults", e)

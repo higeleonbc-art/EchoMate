@@ -88,17 +88,17 @@ class VoiceOutput:
         self._cancel_flag = False
         self._voicevox_available: bool | None = None
         self.is_speaking: bool = False   # 再生中フラグ（アバター口パク用）
-        logger.info("VoiceOutput initialized (speaker_id=%d)", speaker_id)
+        logger.debug("VoiceOutput initialized (speaker_id=%d)", speaker_id)
 
     def set_speaker(self, speaker_id: int) -> None:
         """キャラクター切替時に VOICEVOX の話者を変更する"""
         self.speaker_id = speaker_id
-        logger.info("VOICEVOX speaker changed to %d", speaker_id)
+        logger.debug("VOICEVOX speaker changed to %d", speaker_id)
 
     def set_volume(self, volume: float) -> None:
         """再生音量を変更する (0.0 〜 2.0 推奨)"""
         self.volume = volume
-        logger.info("VOICEVOX volume changed to %.2f", volume)
+        logger.debug("VOICEVOX volume changed to %.2f", volume)
 
     def stop(self) -> None:
         """再生中の音声を即座にキャンセルする（Barge-in対応）"""
@@ -305,7 +305,6 @@ class VoiceInput:
             )
             text = "".join(s.text for s in segments).strip()
             if text:
-                logger.info("Recognized: %s", text)
                 return text
             return None
 

@@ -402,31 +402,30 @@ class EchoMate:
     # ------------------------------------------------------------------
 
     def _voice_input_loop(self) -> None:
-        self.logger.info("VoiceInput loop started (available=%s)", self.voice_input.available)
+        self.logger.debug("VoiceInput loop started (available=%s)", self.voice_input.available)
         while self.running:
             try:
                 text = self.voice_input.listen(timeout=3.0, phrase_time_limit=8.0)
                 if text:
-                    self.logger.info("Player said: %s", text)
                     self.event_manager.add_event(GameEvent("player_speech", {"text": text}))
             except Exception as e:
                 self.logger.error("VoiceInput loop error: %s", e)
                 time.sleep(1.0)
 
     def _event_generator_loop(self) -> None:
-        self.logger.info("EventGenerator loop started")
+        self.logger.debug("EventGenerator loop started")
         while self.running:
             try:
                 time.sleep(random.uniform(self.DUMMY_EVENT_INTERVAL_MIN, self.DUMMY_EVENT_INTERVAL_MAX))
                 event = generate_dummy_event()
-                self.logger.info("Dummy event: %s", event.event_type)
+                self.logger.debug("Dummy event: %s", event.event_type)
                 self.event_manager.add_event(event)
             except Exception as e:
                 self.logger.error("EventGenerator error: %s", e)
                 time.sleep(1.0)
 
     def _event_processor_loop(self) -> None:
-        self.logger.info("EventProcessor loop started")
+        self.logger.debug("EventProcessor loop started")
         while self.running:
             try:
                 event = self.event_manager.get_event(timeout=0.1)
@@ -437,7 +436,7 @@ class EchoMate:
                 time.sleep(0.1)
 
     def _proactive_loop(self) -> None:
-        self.logger.info("ProactiveChat loop started (threshold=%.0fs)", self.SILENCE_THRESHOLD)
+        self.logger.debug("ProactiveChat loop started (threshold=%.0fs)", self.SILENCE_THRESHOLD)
         while self.running:
             time.sleep(self.PROACTIVE_CHECK_INTERVAL)
             try:
@@ -509,7 +508,7 @@ class EchoMate:
 
     def _state_tick_loop(self) -> None:
         """テンション減衰など時間依存の状態更新を定期実行する"""
-        self.logger.info("StateTick loop started")
+        self.logger.debug("StateTick loop started")
         while self.running:
             time.sleep(self.STATE_TICK_INTERVAL)
             try:
@@ -560,7 +559,7 @@ class EchoMate:
 
         # 実質1文字以下の文字列、または無視リストに一致する場合はスルー
         if len(clean_text) <= 1 or _matches_ignore(clean_text):
-            self.logger.info("Ignored short/filler speech: %s", player_text)
+            self.logger.debug("Ignored short/filler speech: %s", player_text)
             return
         # ────────────────────────────
 
