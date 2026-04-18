@@ -257,6 +257,10 @@ class EchoMate:
             event_callback=self.state_manager.record_input_event
         )
 
+        # EXE 監視（指定 EXE の起動/終了でゲームモード⇔対話モードを自動切換え）
+        self._target_exe: Optional[str] = audio_target_exe
+        self._game_running: bool = True  # EXE が起動していると仮定して開始
+
         # VOICEVOXキュー（上限を超えたら古いものを破棄して詰まりを防ぐ）
         self._speech_queue: _queue.Queue = _queue.Queue(maxsize=self.SPEECH_QUEUE_MAX)
 
@@ -345,6 +349,8 @@ class EchoMate:
             ("StateTick",      self._state_tick_loop),
             ("SpeechWorker",   self._speech_worker_loop),
         ]
+        if self._target_exe and (self.cv_detector or self.audio_detector):
+            thread_targets.append(("ExeWatcher", self._exe_watch_loop))
         # ダミーイベントは --debug フラグが指定された場合のみ起動
         if self.enable_dummy:
             thread_targets.insert(1, ("EventGenerator", self._event_generator_loop))
@@ -533,6 +539,48 @@ class EchoMate:
                 self.state_manager.tick()
             except Exception as e:
                 self.logger.error("StateTick error: %s", e)
+
+    _EXE_WATCH_INTERVAL = 5.0  # EXE 確認間隔（秒）
+
+    def _exe_watch_loop(self) -> None:
+        """指定 EXE の起動状態を監視し、停止中は検出器を一時停止・再起動時に再開する"""
+        try:
+            import psutil
+        except ImportError:
+            self.logger.warning("psutil not installed — exe watch disabled")
+            return
+
+        self.logger.info("ExeWatcher started (target=%s)", self._target_exe)
+        exe_lower = self._target_exe.lower()
+
+        while self.running:
+            time.sleep(self._EXE_WATCH_INTERVAL)
+            try:
+                is_running = any(
+                    p.info["name"] and p.info["name"].lower() == exe_lower
+                    for p in psutil.process_iter(["name"])
+                )
+            except Exception as e:
+                self.logger.debug("ExeWatcher psutil error: %s", e)
+                continue
+
+            if self._game_running and not is_running:
+                self._game_running = False
+                self.logger.info("ExeWatcher: '%s' terminated — switching to dialogue mode", self._target_exe)
+                print(f"[ExeWatch] {self._target_exe} が終了しました。対話モードに切り替えます。")
+                if self.cv_detector:
+                    self.cv_detector.stop()
+                if self.audio_detector:
+                    self.audio_detector.stop()
+
+            elif not self._game_running and is_running:
+                self._game_running = True
+                self.logger.info("ExeWatcher: '%s' detected — resuming game mode", self._target_exe)
+                print(f"[ExeWatch] {self._target_exe} を検出しました。ゲームモードに戻ります。")
+                if self.cv_detector and self.cv_detector.is_available():
+                    self.cv_detector.start()
+                if self.audio_detector and self.audio_detector.is_available():
+                    self.audio_detector.start()
 
     # ------------------------------------------------------------------
     # イベント処理

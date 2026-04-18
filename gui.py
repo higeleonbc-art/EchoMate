@@ -1501,6 +1501,8 @@ class ProfileFrame(ttk.Frame):
         ttk.Button(btn_row, text="更新", command=self._refresh).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_row, text="プロファイルをリセット",
                    command=self._reset_profile).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_row, text="会話DBをリセット",
+                   command=self._reset_db).pack(side=tk.LEFT, padx=4)
 
     def _poll(self) -> None:
         self._refresh()
@@ -1557,6 +1559,23 @@ class ProfileFrame(ttk.Frame):
             em.user_profile.reset()
             self._refresh()
             messagebox.showinfo("完了", "プロファイルをリセットしました", parent=self)
+        except Exception as e:
+            messagebox.showerror("エラー", f"リセットに失敗しました:\n{e}", parent=self)
+
+    def _reset_db(self) -> None:
+        em = self._get_echo_mate()
+        if em is None or not hasattr(em, "patron_db"):
+            messagebox.showwarning("リセット不可", "EchoMate が起動していません", parent=self)
+            return
+        if not messagebox.askyesno(
+            "会話DBリセット",
+            "会話ログ・要約・エピソード・成長記録をすべて削除します。\nこの操作は元に戻せません。\n\nよろしいですか？",
+            parent=self,
+        ):
+            return
+        try:
+            em.patron_db.reset_all()
+            messagebox.showinfo("完了", "会話DBをリセットしました", parent=self)
         except Exception as e:
             messagebox.showerror("エラー", f"リセットに失敗しました:\n{e}", parent=self)
 

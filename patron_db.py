@@ -188,6 +188,20 @@ class PatronDB:
         with self._connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
 
+    def reset_all(self) -> None:
+        """全テーブルのデータを削除してオートインクリメントをリセットする"""
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute("DELETE FROM logs")
+                conn.execute("DELETE FROM summaries")
+                conn.execute("DELETE FROM episodes")
+                conn.execute("DELETE FROM growth_observations")
+                conn.execute(
+                    "DELETE FROM sqlite_sequence WHERE name IN "
+                    "('logs','summaries','episodes','growth_observations')"
+                )
+        logger.info("PatronDB: all tables reset")
+
     # ------------------------------------------------------------------
     # エピソード記憶 (episodes テーブル)
     # ------------------------------------------------------------------
