@@ -11,3 +11,9 @@ user_profile.json
 # ローカル設定（モデル名・API URLなど）
 .env
 .clauderules
+
+# AI会話記憶
+ai_memory.db
+ai_temp_memory.db
+
+scratch/

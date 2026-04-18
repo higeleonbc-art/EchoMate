@@ -31,6 +31,7 @@ main.py - EchoMate メインスクリプト（v3 - 良き隣人システム）
 import json
 import logging
 import logging.handlers
+import queue as _queue
 import re
 import sys
 import threading
@@ -184,6 +185,7 @@ class EchoMate:
     PROACTIVE_CHECK_INTERVAL  = 5.0
     STATE_TICK_INTERVAL       = 3.0   # StateManager.tick() の呼び出し間隔（秒）
     PROACTIVE_VISION_INTERVAL = 20.0  # 自発的 VLM 解析の間隔（秒）
+    SPEECH_QUEUE_MAX          = 3     # VOICEVOXキューの最大積み上げ件数
     # イベント種別ごとのクールダウン（秒）。連続発生しやすい kill/death は短め
     _EVENT_COOLDOWNS: dict = {
         "kill":     5.0,
@@ -254,6 +256,9 @@ class EchoMate:
         self.input_monitor = InputMonitor(
             event_callback=self.state_manager.record_input_event
         )
+
+        # VOICEVOXキュー（上限を超えたら古いものを破棄して詰まりを防ぐ）
+        self._speech_queue: _queue.Queue = _queue.Queue(maxsize=self.SPEECH_QUEUE_MAX)
 
         # タイミング管理
         self.running                   = False
@@ -338,6 +343,7 @@ class EchoMate:
             ("EventProcessor", self._event_processor_loop),
             ("ProactiveChat",  self._proactive_loop),
             ("StateTick",      self._state_tick_loop),
+            ("SpeechWorker",   self._speech_worker_loop),
         ]
         # ダミーイベントは --debug フラグが指定された場合のみ起動
         if self.enable_dummy:
@@ -545,6 +551,12 @@ class EchoMate:
 
         # Task3: プレイヤーが話し始めたら現在のAI音声を即座に停止（Barge-in）
         self.voice_output.stop()
+        # 未再生キューも全て破棄（barge-in 後の余計な発話を防ぐ）
+        while not self._speech_queue.empty():
+            try:
+                self._speech_queue.get_nowait()
+            except _queue.Empty:
+                break
 
         # ── 雑音・相槌のフィルタリング処理 ──
         # 空白や句読点といった記号を除去し、純粋なテキストを抽出
@@ -795,6 +807,23 @@ class EchoMate:
 
         threading.Thread(target=_check, daemon=True, name="VisionCheck").start()
 
+    def _speech_worker_loop(self) -> None:
+        """VOICEVOXキューを順番に処理するワーカースレッド（1件ずつ直列再生）"""
+        while self.running:
+            try:
+                item = self._speech_queue.get(timeout=0.5)
+            except _queue.Empty:
+                continue
+            try:
+                text, speaker_id, normal_id = item
+                if speaker_id is not None and speaker_id != self.voice_output.speaker_id:
+                    self.voice_output.set_speaker(speaker_id)
+                self.voice_output.speak(text)
+                if normal_id is not None and self.voice_output.speaker_id != normal_id:
+                    self.voice_output.set_speaker(normal_id)
+            except Exception as e:
+                self.logger.error("SpeechWorker error: %s", e)
+
     def _speak_async(self, text: str) -> None:
         # GUI 吹き出し UI へテキストを通知する
         if self._speech_callback:
@@ -822,19 +851,10 @@ class EchoMate:
             else:
                 speaker_id = emotion_speakers.get("normal", normal_id)
 
-        def _speak_with_emotion() -> None:
-            if speaker_id is not None and speaker_id != self.voice_output.speaker_id:
-                self.voice_output.set_speaker(speaker_id)
-            self.voice_output.speak(text)
-            # 再生完了後にnormal IDへ戻す
-            if normal_id is not None and self.voice_output.speaker_id != normal_id:
-                self.voice_output.set_speaker(normal_id)
-
-        threading.Thread(
-            target=_speak_with_emotion,
-            daemon=True,
-            name="VoiceOutput",
-        ).start()
+        try:
+            self._speech_queue.put_nowait((text, speaker_id, normal_id))
+        except _queue.Full:
+            self.logger.warning("Speech queue full — dropping: %r", text[:30])
 
     def _print_banner(self) -> None:
         char_name = self.ai.current_character.get("name", "?")
