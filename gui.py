@@ -1805,6 +1805,22 @@ class EchoMateGUI:
         )
         self._thinking_label.pack(side=tk.RIGHT, padx=8)
 
+        # ── フッター1.5: 音量スライダー ───────────────────────────────────
+        vol_row = ttk.Frame(self.root)
+        vol_row.pack(fill=tk.X, padx=8, pady=(0, 2))
+
+        ttk.Label(vol_row, text="🔊 音量:", font=("Meiryo", 9)).pack(side=tk.LEFT, padx=(4, 2))
+
+        self._volume_var = tk.DoubleVar(value=float(os.getenv("VOICE_VOLUME", "1.0")))
+        ttk.Scale(
+            vol_row, from_=0.0, to=2.0, orient=tk.HORIZONTAL,
+            variable=self._volume_var, command=self._on_volume_change,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+
+        self._volume_label_var = tk.StringVar(value=f"{self._volume_var.get():.1f}x")
+        ttk.Label(vol_row, textvariable=self._volume_label_var,
+                  font=("Consolas", 9), width=5).pack(side=tk.LEFT, padx=(0, 4))
+
         # ── フッター2: ゲーム音レベルバー（常時表示） ────────────────────
         audio_footer = ttk.Frame(self.root, relief=tk.GROOVE, borderwidth=1)
         audio_footer.pack(fill=tk.X, padx=8, pady=(0, 6))
@@ -1913,6 +1929,16 @@ class EchoMateGUI:
             self._status_var.set("動作中（対話モード）")
         else:
             self._status_var.set("動作中（ゲームモード）")
+        # 起動直後にスライダーの現在値を voice_output へ反映
+        if self._echo_mate:
+            self._echo_mate.voice_output.set_volume(self._volume_var.get())
+
+    def _on_volume_change(self, value: str) -> None:
+        """音量スライダー変更時にリアルタイムで VoiceOutput へ反映する"""
+        vol = float(value)
+        self._volume_label_var.set(f"{vol:.1f}x")
+        if self._echo_mate:
+            self._echo_mate.voice_output.set_volume(vol)
 
     def _on_start_failed(self, message: str) -> None:
         self._btn_start.config(state=tk.NORMAL)
