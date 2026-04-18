@@ -409,6 +409,13 @@ class UserProfile:
             logger.error("summarize_long_term error: %s", e)
             return False
 
+    def reset(self) -> None:
+        """プロファイルをデフォルト値にリセットする"""
+        with self._lock:
+            self._data = _deep_copy(_DEFAULT_PROFILE)
+        self.save()
+        logger.info("UserProfile reset to defaults")
+
     def get_summary_for_prompt(self) -> str:
         """
         RAGプロンプトに埋め込む簡潔なプロファイルサマリーを返す。

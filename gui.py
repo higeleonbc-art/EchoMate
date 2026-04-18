@@ -20,7 +20,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 from typing import Optional
 
 # ── オプション依存ライブラリ ─────────────────────────────────────────────────
@@ -64,6 +64,17 @@ except ImportError:
     except ImportError:
         _PYAUDIO_AVAILABLE = False
 
+# PyAudioが実際に初期化できるか確認（PortAudioの assert crash を防ぐ）
+if _PYAUDIO_AVAILABLE:
+    import subprocess as _subprocess
+    _test = _subprocess.run(
+        [sys.executable, "-c", "import pyaudiowpatch as p; p.PyAudio().terminate()" if _WPATCH_AVAILABLE
+         else "import pyaudio as p; p.PyAudio().terminate()"],
+        capture_output=True, timeout=10
+    )
+    if _test.returncode != 0:
+        _PYAUDIO_AVAILABLE = False
+
 import httpx
 
 from bubble import SpeechBubble, AvatarWindow
@@ -98,6 +109,9 @@ ZONE_COLORS = ["#FF4444", "#FFDD00", "#AA44FF", "#44AAFF"]
 
 logger = logging.getLogger(__name__)
 
+# PortAudio の Pa_Initialize() はスレッドアンセーフなため同時呼び出しを防ぐ
+_pyaudio_lock = threading.Lock()
+
 
 # ── オーディオデバイス列挙 ────────────────────────────────────────────────────
 
@@ -106,7 +120,8 @@ def list_audio_input_devices() -> list[tuple[int, str]]:
     if not _PYAUDIO_AVAILABLE:
         return []
     try:
-        p = _pyaudio.PyAudio()
+        with _pyaudio_lock:
+            p = _pyaudio.PyAudio()
         devices: list[tuple[int, str]] = []
         for i in range(p.get_device_count()):
             info = p.get_device_info_by_index(i)
@@ -127,7 +142,8 @@ def list_loopback_devices() -> list[tuple[int, str]]:
     if not _PYAUDIO_AVAILABLE or not _WPATCH_AVAILABLE:
         return []
     try:
-        p = _pyaudio.PyAudio()
+        with _pyaudio_lock:
+            p = _pyaudio.PyAudio()
         devices: list[tuple[int, str]] = []
         for i in range(p.get_device_count()):
             info = p.get_device_info_by_index(i)
@@ -157,7 +173,7 @@ class MicMonitor:
 
     def start(self) -> None:
         """現在の device_index でモニタリングを開始する"""
-        if not _PYAUDIO_AVAILABLE:
+        if not _PYAUDIO_AVAILABLE or self.device_index is None:
             return
         self._gen += 1
         t = threading.Thread(
@@ -180,7 +196,8 @@ class MicMonitor:
         self.current_rms = 0.0
 
     def _loop(self, gen: int) -> None:
-        p = _pyaudio.PyAudio()
+        with _pyaudio_lock:
+            p = _pyaudio.PyAudio()
         stream = None
         try:
             # デバイスのネイティブサンプルレートを使用（ループバック互換性のため）
@@ -861,33 +878,18 @@ class MicSetupFrame(ttk.Frame):
         # ════════════════════════════════════════════════════════════════
         # 2. ゲームイベント検知デバイス（AudioDetector 専用）
         # ════════════════════════════════════════════════════════════════
-        detect_frame = ttk.LabelFrame(self, text="ゲームイベント検知デバイス（AudioDetector）")
+        detect_frame = ttk.LabelFrame(self, text="ゲームイベント検知デバイス（WASAPIループバック）")
         detect_frame.pack(fill=tk.X, padx=8, pady=4)
 
-        # モード選択
-        self._mode_var = tk.StringVar(value="mic")
-        ttk.Radiobutton(
-            detect_frame, text="音声認識と同じマイクを使用",
-            variable=self._mode_var, value="mic",
-            command=self._on_detect_mode_change,
-        ).pack(anchor=tk.W, padx=8, pady=(6, 2))
-
-        lb_row = ttk.Frame(detect_frame)
-        lb_row.pack(fill=tk.X, padx=8, pady=(2, 4))
-        ttk.Radiobutton(
-            lb_row, text="ゲーム音をキャプチャ（WASAPIループバック）",
-            variable=self._mode_var, value="loopback",
-            command=self._on_detect_mode_change,
-        ).pack(side=tk.LEFT)
         if not _WPATCH_AVAILABLE:
             ttk.Label(
-                lb_row, text="※ pip install pyaudiowpatch が必要",
+                detect_frame, text="※ pip install pyaudiowpatch が必要",
                 foreground="#cc6600", font=("Meiryo", 8),
-            ).pack(side=tk.LEFT, padx=6)
+            ).pack(anchor=tk.W, padx=8, pady=(4, 0))
 
-        # ループバックデバイス選択（ループバックモード時のみ有効）
+        # ループバックデバイス選択
         self._detect_row = ttk.Frame(detect_frame)
-        self._detect_row.pack(fill=tk.X, padx=8, pady=(0, 2))
+        self._detect_row.pack(fill=tk.X, padx=8, pady=(4, 2))
         self._detect_var   = tk.StringVar()
         self._detect_combo = ttk.Combobox(
             self._detect_row, textvariable=self._detect_var,
@@ -918,23 +920,7 @@ class MicSetupFrame(ttk.Frame):
 
         # 初期構築
         self._refresh_mic_devices()
-        self._on_detect_mode_change()
-
-    # ── モード切替 ────────────────────────────────────────────────────────────
-
-    def _on_detect_mode_change(self) -> None:
-        is_loopback = self._mode_var.get() == "loopback"
-        state = tk.NORMAL if is_loopback else tk.DISABLED
-        for child in self._detect_row.winfo_children():
-            try:
-                child.configure(state=state)
-            except Exception:
-                pass
-        if is_loopback:
-            self._refresh_detect_devices()
-        else:
-            self._detect_status_var.set("（音声認識デバイスと同一）")
-            self._audio_monitor.stop()
+        self._refresh_detect_devices()
 
     # ── デバイスリスト更新 ────────────────────────────────────────────────────
 
@@ -966,8 +952,6 @@ class MicSetupFrame(ttk.Frame):
             self._audio_monitor.stop()
 
     def _on_detect_select(self, _event=None) -> None:
-        if self._mode_var.get() != "loopback":
-            return
         sel = self._detect_combo.current()
         if 0 <= sel < len(self._detect_devices):
             dev_idx, _ = self._detect_devices[sel]
@@ -1050,15 +1034,11 @@ class MicSetupFrame(ttk.Frame):
         return None
 
     def get_audio_detect_device(self) -> int | None:
-        """AudioDetector（ゲームイベント検知）用デバイスインデックスを返す。
-        マイクモードなら VoiceInput と同じデバイス、ループバックモードなら選択中のループバックデバイス。"""
-        if self._mode_var.get() == "loopback":
-            sel = self._detect_combo.current()
-            if 0 <= sel < len(self._detect_devices):
-                return self._detect_devices[sel][0]
-            return None
-        # "mic" モード: 音声認識デバイスと同じ
-        return self.get_voice_input_device()
+        """AudioDetector（ゲームイベント検知）用ループバックデバイスインデックスを返す。"""
+        sel = self._detect_combo.current()
+        if 0 <= sel < len(self._detect_devices):
+            return self._detect_devices[sel][0]
+        return None
 
 
 # ── 相棒設定タブ ──────────────────────────────────────────────────────────────
@@ -1235,7 +1215,7 @@ class BubbleFrame(ttk.Frame):
 # ── 学習ノートタブ ────────────────────────────────────────────────────────────
 
 class LearningFrame(ttk.Frame):
-    """相棒の学習ノート（気になること）タブ（Task6b）"""
+    """相棒の学習ノート（気になること）タブ"""
 
     def __init__(self, master: tk.Misc) -> None:
         super().__init__(master)
@@ -1251,7 +1231,7 @@ class LearningFrame(ttk.Frame):
 
         scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
         self._word_list = tk.Listbox(
-            list_frame, yscrollcommand=scroll.set, height=7,
+            list_frame, yscrollcommand=scroll.set, height=6,
             selectmode=tk.SINGLE, font=("Meiryo", 10), exportselection=False,
         )
         scroll.config(command=self._word_list.yview)
@@ -1261,23 +1241,46 @@ class LearningFrame(ttk.Frame):
         btn_row = ttk.Frame(list_frame)
         btn_row.pack(fill=tk.X, padx=4, pady=(0, 4))
         ttk.Button(btn_row, text="一覧を更新", command=self._refresh).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text="名前を変更",
+                   command=self._rename_curiosity).pack(side=tk.LEFT, padx=(6, 0))
 
-        # ── URL入力と学習ボタン ─────────────────────────────────────────────
-        learn_frame = ttk.LabelFrame(self, text="URLから学習させる")
-        learn_frame.pack(fill=tk.X, padx=8, pady=4)
+        # ── 学習入力タブ（URL / ノート） ────────────────────────────────────
+        input_nb = ttk.Notebook(self)
+        input_nb.pack(fill=tk.X, padx=8, pady=4)
 
-        ttk.Label(learn_frame, text="URL:").grid(row=0, column=0, padx=6, pady=6, sticky=tk.W)
+        # URL タブ
+        url_tab = ttk.Frame(input_nb)
+        input_nb.add(url_tab, text="  URLから学習  ")
+        ttk.Label(url_tab, text="URL:").grid(row=0, column=0, padx=6, pady=6, sticky=tk.W)
         self._url_var = tk.StringVar()
-        ttk.Entry(learn_frame, textvariable=self._url_var,
-                  width=38).grid(row=0, column=1, padx=4, pady=6, sticky=tk.EW)
-        ttk.Button(learn_frame, text="学習させる",
-                   command=self._learn).grid(row=0, column=2, padx=6, pady=6)
-        learn_frame.columnconfigure(1, weight=1)
+        ttk.Entry(url_tab, textvariable=self._url_var,
+                  width=36).grid(row=0, column=1, padx=4, pady=6, sticky=tk.EW)
+        ttk.Button(url_tab, text="学習させる",
+                   command=self._learn_url).grid(row=0, column=2, padx=6, pady=6)
+        url_tab.columnconfigure(1, weight=1)
+
+        # ノート タブ
+        note_tab = ttk.Frame(input_nb)
+        input_nb.add(note_tab, text="  ノートから学習  ")
+        ttk.Label(note_tab, text="内容を直接入力してください:").pack(
+            anchor=tk.W, padx=6, pady=(6, 2))
+        note_inner = ttk.Frame(note_tab)
+        note_inner.pack(fill=tk.X, padx=6, pady=(0, 4))
+        note_scroll = ttk.Scrollbar(note_inner, orient=tk.VERTICAL)
+        self._note_text = tk.Text(
+            note_inner, height=4, wrap=tk.WORD, font=("Meiryo", 9),
+            yscrollcommand=note_scroll.set,
+        )
+        note_scroll.config(command=self._note_text.yview)
+        self._note_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        note_scroll.pack(side=tk.LEFT, fill=tk.Y)
+        ttk.Button(note_tab, text="ノートから学習させる",
+                   command=self._learn_note).pack(anchor=tk.E, padx=6, pady=(0, 6))
 
         # ステータス
-        self._status_var = tk.StringVar(value="単語を選択してURLを入力してください")
+        self._status_var = tk.StringVar(value="単語を選択して学習方法を選んでください")
         ttk.Label(self, textvariable=self._status_var,
-                  foreground="gray").pack(anchor=tk.W, padx=10, pady=(0, 4))
+                  foreground="gray").pack(anchor=tk.W, padx=10, pady=(0, 2))
 
         # ── 学習済み知識 ────────────────────────────────────────────────────
         knowledge_frame = ttk.LabelFrame(self, text="学習済みのゲーム知識")
@@ -1285,13 +1288,26 @@ class LearningFrame(ttk.Frame):
 
         scroll2 = ttk.Scrollbar(knowledge_frame, orient=tk.VERTICAL)
         self._knowledge_list = tk.Listbox(
-            knowledge_frame, yscrollcommand=scroll2.set, height=5,
+            knowledge_frame, yscrollcommand=scroll2.set, height=4,
             font=("Meiryo", 9), exportselection=False,
         )
         scroll2.config(command=self._knowledge_list.yview)
         self._knowledge_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True,
                                    padx=(4, 0), pady=4)
         scroll2.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 4), pady=4)
+
+        k_btn_row = ttk.Frame(knowledge_frame)
+        k_btn_row.pack(fill=tk.X, padx=4, pady=(0, 4))
+        ttk.Button(k_btn_row, text="名前を変更",
+                   command=self._rename_knowledge).pack(side=tk.LEFT)
+
+        # ── 辞書リセット ────────────────────────────────────────────────────
+        reset_frame = ttk.Frame(self)
+        reset_frame.pack(fill=tk.X, padx=8, pady=(0, 6))
+        ttk.Button(reset_frame, text="気になることリストをリセット",
+                   command=self._reset_curiosity).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(reset_frame, text="学習済み知識をリセット",
+                   command=self._reset_knowledge).pack(side=tk.LEFT)
 
         self._refresh()
 
@@ -1308,33 +1324,127 @@ class LearningFrame(ttk.Frame):
         except Exception as e:
             self._status_var.set(f"読み込みエラー: {e}")
 
-    def _learn(self) -> None:
+    def _get_selected_word(self) -> Optional[str]:
         sel = self._word_list.curselection()
         if not sel:
             self._status_var.set("単語をリストから選択してください")
+            return None
+        return self._word_list.get(sel[0])
+
+    def _learn_url(self) -> None:
+        word = self._get_selected_word()
+        if not word:
             return
-        word = self._word_list.get(sel[0])
         url = self._url_var.get().strip()
         if not url:
             self._status_var.set("URLを入力してください")
             return
-
         self._status_var.set(f"「{word}」を学習中... しばらくお待ちください")
 
-        def _do_learn() -> None:
+        def _do() -> None:
             try:
                 from web_learner import learn_from_url
                 success, message = learn_from_url(word, url)
-                display = message[:50] + "..." if len(message) > 50 else message
-                if success:
-                    self.after(0, lambda: self._status_var.set(f"学習完了: {display}"))
-                else:
-                    self.after(0, lambda: self._status_var.set(f"学習失敗: {display}"))
+                display = message[:60] + "..." if len(message) > 60 else message
+                self.after(0, lambda: self._status_var.set(
+                    f"学習完了: {display}" if success else f"学習失敗: {display}"))
                 self.after(0, self._refresh)
+            except RuntimeError as e:
+                self.after(0, lambda: self._status_var.set(f"⚠ {e}"))
             except Exception as e:
                 self.after(0, lambda: self._status_var.set(f"エラー: {e}"))
 
-        threading.Thread(target=_do_learn, daemon=True, name="WebLearner").start()
+        threading.Thread(target=_do, daemon=True, name="WebLearner").start()
+
+    def _learn_note(self) -> None:
+        word = self._get_selected_word()
+        if not word:
+            return
+        note = self._note_text.get("1.0", tk.END).strip()
+        if not note:
+            self._status_var.set("ノートの内容を入力してください")
+            return
+        self._status_var.set(f"「{word}」をノートから学習中...")
+
+        def _do() -> None:
+            try:
+                from web_learner import learn_from_note
+                success, message = learn_from_note(word, note)
+                display = message[:60] + "..." if len(message) > 60 else message
+                self.after(0, lambda: self._status_var.set(
+                    f"学習完了: {display}" if success else f"学習失敗: {display}"))
+                self.after(0, self._refresh)
+            except RuntimeError as e:
+                self.after(0, lambda: self._status_var.set(f"⚠ {e}"))
+            except Exception as e:
+                self.after(0, lambda: self._status_var.set(f"エラー: {e}"))
+
+        threading.Thread(target=_do, daemon=True, name="NoteLearner").start()
+
+    def _rename_curiosity(self) -> None:
+        word = self._get_selected_word()
+        if not word:
+            return
+        new_name = simpledialog.askstring(
+            "名前を変更", f"「{word}」の新しい名前を入力してください:", initialvalue=word, parent=self)
+        if not new_name or new_name.strip() == word:
+            return
+        try:
+            from web_learner import rename_curiosity
+            if rename_curiosity(word, new_name.strip()):
+                self._status_var.set(f"「{word}」→「{new_name.strip()}」に変更しました")
+                self._refresh()
+            else:
+                self._status_var.set("名前の変更に失敗しました")
+        except Exception as e:
+            self._status_var.set(f"エラー: {e}")
+
+    def _reset_curiosity(self) -> None:
+        if not messagebox.askyesno(
+            "リセット確認", "気になることリストをすべて削除しますか？", parent=self
+        ):
+            return
+        try:
+            from web_learner import clear_curiosity_list
+            count = clear_curiosity_list()
+            self._status_var.set(f"気になることリストをリセットしました（{count}件削除）")
+            self._refresh()
+        except Exception as e:
+            self._status_var.set(f"エラー: {e}")
+
+    def _reset_knowledge(self) -> None:
+        if not messagebox.askyesno(
+            "リセット確認", "学習済み知識をすべて削除しますか？", parent=self
+        ):
+            return
+        try:
+            from web_learner import clear_game_knowledge
+            count = clear_game_knowledge()
+            self._status_var.set(f"学習済み知識をリセットしました（{count}件削除）")
+            self._refresh()
+        except Exception as e:
+            self._status_var.set(f"エラー: {e}")
+
+    def _rename_knowledge(self) -> None:
+        sel = self._knowledge_list.curselection()
+        if not sel:
+            self._status_var.set("変更する項目を選択してください")
+            return
+        entry = self._knowledge_list.get(sel[0])
+        old_word = entry.split(":")[0].strip()
+        new_name = simpledialog.askstring(
+            "名前を変更", f"「{old_word}」の新しい名前を入力してください:", initialvalue=old_word, parent=self)
+        if not new_name or new_name.strip() == old_word:
+            return
+        try:
+            from web_learner import rename_knowledge
+            if rename_knowledge(old_word, new_name.strip()):
+                self._status_var.set(f"「{old_word}」→「{new_name.strip()}」に変更しました")
+                self._refresh()
+            else:
+                self._status_var.set("名前の変更に失敗しました")
+        except Exception as e:
+            self._status_var.set(f"エラー: {e}")
 
 
 # ── プロファイルタブ ──────────────────────────────────────────────────────────
@@ -1386,7 +1496,11 @@ class ProfileFrame(ttk.Frame):
         self._ep_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0), pady=4)
         scroll.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 4), pady=4)
 
-        ttk.Button(self, text="更新", command=self._refresh).pack(pady=(0, 8))
+        btn_row = ttk.Frame(self)
+        btn_row.pack(pady=(0, 8))
+        ttk.Button(btn_row, text="更新", command=self._refresh).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_row, text="プロファイルをリセット",
+                   command=self._reset_profile).pack(side=tk.LEFT, padx=4)
 
     def _poll(self) -> None:
         self._refresh()
@@ -1427,6 +1541,24 @@ class ProfileFrame(ttk.Frame):
                 self._ep_list.insert(tk.END, entry)
         except Exception:
             pass
+
+    def _reset_profile(self) -> None:
+        em = self._get_echo_mate()
+        if em is None or not hasattr(em, "user_profile"):
+            messagebox.showwarning("リセット不可", "EchoMate が起動していません", parent=self)
+            return
+        if not messagebox.askyesno(
+            "プロファイルリセット",
+            "プロファイルをすべて初期値に戻します。\n親密度・プレイスタイル・記憶もリセットされます。\n\nよろしいですか？",
+            parent=self,
+        ):
+            return
+        try:
+            em.user_profile.reset()
+            self._refresh()
+            messagebox.showinfo("完了", "プロファイルをリセットしました", parent=self)
+        except Exception as e:
+            messagebox.showerror("エラー", f"リセットに失敗しました:\n{e}", parent=self)
 
 
 # ── メンタルグラフタブ ────────────────────────────────────────────────────────
@@ -1744,10 +1876,11 @@ class EchoMateGUI:
                 monitor_idx    = self._game_tab.get_monitor_index()
                 target_exe     = self._game_tab.get_selected_exe()
                 exclude_pids   = ServiceManager.get_voicevox_pids()
+                dialogue_mode  = not target_exe
                 self._echo_mate = EchoMate(
                     character=char_key,
-                    enable_cv=True,
-                    enable_audio=True,
+                    enable_cv=not dialogue_mode,
+                    enable_audio=not dialogue_mode,
                     enable_dummy=False,
                     speech_callback=self._on_speech,
                     voice_input_device=voice_device,
@@ -1768,15 +1901,18 @@ class EchoMateGUI:
             # 5. 吹き出し・アバター作成
             self.root.after(0, self._create_bubble)
             self.root.after(0, self._create_avatar)
-            self.root.after(0, self._on_start_success)
+            self.root.after(0, self._on_start_success, dialogue_mode)
 
         threading.Thread(target=_launch, daemon=True, name="Launch").start()
 
-    def _on_start_success(self) -> None:
+    def _on_start_success(self, dialogue_mode: bool = False) -> None:
         self._running = True
         self._btn_start.config(state=tk.DISABLED)
         self._btn_stop.config(state=tk.NORMAL)
-        self._status_var.set("動作中")
+        if dialogue_mode:
+            self._status_var.set("動作中（対話モード）")
+        else:
+            self._status_var.set("動作中（ゲームモード）")
 
     def _on_start_failed(self, message: str) -> None:
         self._btn_start.config(state=tk.NORMAL)

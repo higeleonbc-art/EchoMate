@@ -304,7 +304,7 @@ class EchoMate:
 
         old_game = self.user_profile.get_current_game()
 
-        if old_game != new_game:
+        if old_game and old_game != new_game:
             self.logger.info(
                 "Game change detected: '%s' → '%s'", old_game, new_game
             )
@@ -317,6 +317,8 @@ class EchoMate:
                 tags=["game_change"],
                 emotion_score=0.2,
             )
+
+        if old_game != new_game:
             self.user_profile.set_current_game(new_game)
             self.user_profile.save()
 
@@ -844,6 +846,12 @@ def _parse_args() -> argparse.Namespace:
         choices=["echo"],
         help="使用するキャラクター（現在: echo のみ）",
     )
+    p.add_argument(
+        "--exe", "-e",
+        default=None,
+        metavar="EXE_NAME",
+        help="ゲームプロセスの EXE 名（例: LeagueOfLegends.exe）。省略時は対話モード",
+    )
     p.add_argument("--no-cv",    action="store_true", help="OpenCV 検出を無効化")
     p.add_argument("--no-audio", action="store_true", help="音声検出を無効化")
     p.add_argument(
@@ -858,11 +866,18 @@ def main() -> None:
     args = _parse_args()
     log_level = logging.DEBUG if args.debug else logging.INFO
     _setup_logging(level=log_level)
+
+    dialogue_mode = args.exe is None
+    if dialogue_mode:
+        print("[対話モード] EXE が指定されていないため、ゲームイベント検知は無効です。")
+        print("            音声・テキスト入力でのみ会話できます。\n")
+
     companion = EchoMate(
         character=args.character,
-        enable_cv=not args.no_cv,
-        enable_audio=not args.no_audio,
+        enable_cv=not args.no_cv and not dialogue_mode,
+        enable_audio=not args.no_audio and not dialogue_mode,
         enable_dummy=args.debug,
+        audio_target_exe=args.exe,
     )
     companion.start()
 
