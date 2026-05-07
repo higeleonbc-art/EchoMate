@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 # Windows cp932 回避
 if hasattr(sys.stdout, "reconfigure"):
@@ -30,6 +31,8 @@ from coach_prompts import build_review_prompt
 from coach_ai import coach_chat
 from coach_review_view import open_review_in_browser
 from coach_rank import resolve_target_rank
+import coach_profile
+import coach_kpi
 
 
 JST = timezone(timedelta(hours=9))
@@ -54,13 +57,33 @@ def queue_label(qid: int) -> str:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Pick a recent match to review")
-    p.add_argument("--riot-id", required=True, help='Riot ID "Name#TAG"')
+    p.add_argument("--riot-id", default=None,
+                   help='Riot ID "Name#TAG"。未指定時はプロファイル(.coach_profile.json)から読み込み')
     p.add_argument("--rank", default="auto",
                    help='目標ランク。"auto"または未指定なら現ランクから1つ上を自動設定')
     p.add_argument("--count", type=int, default=10, help="表示する直近試合数")
     p.add_argument("--no-llm", dest="llm", action="store_false", default=True)
     p.add_argument("--debug", action="store_true")
     return p.parse_args()
+
+
+def resolve_riot_id(arg_riot_id: Optional[str]) -> Optional[str]:
+    """--riot-id 引数 → プロファイル → 対話入力 の順で解決し、解決後は保存。"""
+    saved = coach_profile.get_riot_id()
+    if arg_riot_id:
+        # 明示指定はプロファイルへ保存
+        if arg_riot_id != saved:
+            coach_profile.set_riot_id(arg_riot_id)
+        return arg_riot_id
+    if saved:
+        print(f"Using saved Riot ID: {saved}  (change with --riot-id)")
+        return saved
+    # 対話入力
+    entered = input('Riot ID (Name#TAG): ').strip()
+    if entered:
+        coach_profile.set_riot_id(entered)
+        return entered
+    return None
 
 
 def main() -> int:
@@ -73,11 +96,13 @@ def main() -> int:
     if not os.environ.get("RIOT_API_KEY"):
         print("ERROR: RIOT_API_KEY が未設定です（.env を確認）", file=sys.stderr)
         return 1
-    if "#" not in args.riot_id:
-        print('ERROR: --riot-id は "Name#TAG" 形式', file=sys.stderr)
+
+    riot_id = resolve_riot_id(args.riot_id)
+    if not riot_id or "#" not in riot_id:
+        print('ERROR: Riot ID は "Name#TAG" 形式で指定してください', file=sys.stderr)
         return 1
 
-    name, tag = args.riot_id.split("#", 1)
+    name, tag = riot_id.split("#", 1)
     platform = os.environ.get("RIOT_PLATFORM", "jp1")
 
     with RiotAPIClient(platform=platform) as client:
@@ -153,6 +178,14 @@ def main() -> int:
             print("自プレイヤーが見つかりません")
             return 1
 
+        # 前回KPIの達成評価
+        kpi_results = coach_kpi.evaluate_kpis(review.stats.match_id, review.stats)
+        if kpi_results:
+            print("\n--- 前回KPI評価 ---")
+            for r in kpi_results:
+                mark = "[OK]" if r["achieved"] else "[NG]"
+                print(f"  {mark} {r['kpi_type']}: target={r['target']} actual={r['actual']}")
+
         # コンソール簡易出力
         s = review.stats
         print(f"\n=== {s.champion} {s.duration_min}min "
@@ -172,8 +205,15 @@ def main() -> int:
             except Exception as e:
                 print(f"  LLM呼び出し失敗: {e}", file=sys.stderr)
 
+        # 新KPIをLLMコメントから抽出して保存
+        if comment:
+            new_kpis = coach_kpi.parse_kpis(comment)
+            saved = coach_kpi.save_kpis(s.match_id, new_kpis)
+            if saved:
+                print(f"  次試合用KPI {saved} 件を保存しました")
+
         # HTML出力
-        path = open_review_in_browser(review, comment or None)
+        path = open_review_in_browser(review, comment or None, prev_kpi_results=kpi_results)
         print(f"\nHTMLレビューをブラウザで開きました: {path}")
     return 0
 

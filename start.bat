@@ -43,8 +43,10 @@ echo   [1] Live overlay        (in-game translucent overlay)
 echo   [2] Review latest match (pick from recent 10 matches)
 echo   [3] Review last 3 matches (any queue)
 echo   [4] Review last 3 ranked solo
-echo   [5] Demo: overlay       (no LoL needed)
-echo   [6] Demo: review HTML   (no LoL needed)
+echo   [5] Champ select assistant (LCU + matchup tip overlay)
+echo   [6] Update personal benchmark (last 30 matches)
+echo   [7] Demo: overlay       (no LoL needed)
+echo   [8] Demo: review HTML   (no LoL needed)
 echo   [Q] Quit
 echo ------------------------------------------------------------
 set /p MODE=Select:
@@ -53,8 +55,10 @@ if /i "!MODE!"=="1" goto LIVE
 if /i "!MODE!"=="2" goto PICK_MATCH
 if /i "!MODE!"=="3" goto REVIEW3_ANY
 if /i "!MODE!"=="4" goto REVIEW3_RANKED
-if /i "!MODE!"=="5" goto DEMO_OVERLAY
-if /i "!MODE!"=="6" goto DEMO_REVIEW
+if /i "!MODE!"=="5" goto CHAMP_SELECT
+if /i "!MODE!"=="6" goto PERSONAL
+if /i "!MODE!"=="7" goto DEMO_OVERLAY
+if /i "!MODE!"=="8" goto DEMO_REVIEW
 if /i "!MODE!"=="Q" goto END
 echo Invalid choice.
 echo.
@@ -70,29 +74,51 @@ goto END
 
 :PICK_MATCH
 echo.
+echo (Press Enter to use saved Riot ID from .coach_profile.json)
 set /p RIOT_ID=Riot ID (Name#TAG):
-if "!RIOT_ID!"=="" goto MENU
 set /p RANK=Target rank [auto = current+1]:
 if "!RANK!"=="" set RANK=auto
-python coach_pick.py --riot-id "!RIOT_ID!" --rank !RANK!
+if "!RIOT_ID!"=="" (
+    python coach_pick.py --rank !RANK!
+) else (
+    python coach_pick.py --riot-id "!RIOT_ID!" --rank !RANK!
+)
 goto END
 
 :REVIEW3_ANY
 echo.
+echo (Press Enter to use saved Riot ID from .coach_profile.json)
 set /p RIOT_ID=Riot ID (Name#TAG):
-if "!RIOT_ID!"=="" goto MENU
 set /p RANK=Target rank [auto = current+1]:
 if "!RANK!"=="" set RANK=auto
-python coach_main.py --riot-id "!RIOT_ID!" --count 3 --rank !RANK! --view html
+if "!RIOT_ID!"=="" (
+    python coach_main.py --count 3 --rank !RANK! --view html
+) else (
+    python coach_main.py --riot-id "!RIOT_ID!" --count 3 --rank !RANK! --view html
+)
 goto END
 
 :REVIEW3_RANKED
 echo.
+echo (Press Enter to use saved Riot ID from .coach_profile.json)
 set /p RIOT_ID=Riot ID (Name#TAG):
-if "!RIOT_ID!"=="" goto MENU
 set /p RANK=Target rank [auto = current+1]:
 if "!RANK!"=="" set RANK=auto
-python coach_main.py --riot-id "!RIOT_ID!" --count 3 --queue 420 --rank !RANK! --view html
+if "!RIOT_ID!"=="" (
+    python coach_main.py --count 3 --queue 420 --rank !RANK! --view html
+) else (
+    python coach_main.py --riot-id "!RIOT_ID!" --count 3 --queue 420 --rank !RANK! --view html
+)
+goto END
+
+:CHAMP_SELECT
+echo Starting champ select assistant. Press ESC to quit.
+python coach_champselect.py
+goto END
+
+:PERSONAL
+echo Computing personal benchmark from your recent 30 matches...
+python coach_personal.py --count 30
 goto END
 
 :DEMO_OVERLAY

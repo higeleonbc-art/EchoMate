@@ -48,6 +48,12 @@ class MatchStats:
     damage_share: float = 0.0
     objective_damage_share: float = 0.0
     early_solo_deaths: int = 0  # 〜10分のデス数（LS派が最も嫌うパターン）
+    # 時系列データ（Chart.js用）
+    minute_series: list[int] = field(default_factory=list)
+    my_cs_series: list[int] = field(default_factory=list)
+    enemy_cs_series: list[int] = field(default_factory=list)
+    my_gold_series: list[int] = field(default_factory=list)
+    enemy_gold_series: list[int] = field(default_factory=list)
 
     @property
     def kda(self) -> float:
@@ -98,6 +104,15 @@ def _gold_at_minute(timeline: dict, participant_id: int, minute: int) -> int:
         return 0
     pf = frames[minute].get("participantFrames", {}).get(str(participant_id), {})
     return pf.get("totalGold", 0)
+
+
+def _participant_series(timeline: dict, pid: int, key_func) -> list[int]:
+    """各フレームから値を取得した時系列リスト"""
+    frames = timeline.get("info", {}).get("frames", [])
+    return [
+        key_func(frame.get("participantFrames", {}).get(str(pid), {}))
+        for frame in frames
+    ]
 
 
 def _death_timestamps(timeline: dict, participant_id: int) -> list[float]:
@@ -188,6 +203,20 @@ def extract_stats(match: dict, timeline: dict, my_puuid: str) -> Optional[MatchS
 
     early_solo = sum(1 for t in death_ts if t < 10)
 
+    # 時系列（CS / Gold）
+    cs_key = lambda pf: pf.get("minionsKilled", 0) + pf.get("jungleMinionsKilled", 0)
+    gold_key = lambda pf: pf.get("totalGold", 0)
+    my_cs_series = _participant_series(timeline, pid, cs_key)
+    my_gold_series = _participant_series(timeline, pid, gold_key)
+    if enemy_adc:
+        en_pid = enemy_adc["participantId"]
+        enemy_cs_series = _participant_series(timeline, en_pid, cs_key)
+        enemy_gold_series = _participant_series(timeline, en_pid, gold_key)
+    else:
+        enemy_cs_series = []
+        enemy_gold_series = []
+    minute_series = list(range(len(my_cs_series)))
+
     return MatchStats(
         match_id=info.get("gameId") and match.get("metadata", {}).get("matchId", ""),
         champion=me.get("championName", ""),
@@ -209,6 +238,11 @@ def extract_stats(match: dict, timeline: dict, my_puuid: str) -> Optional[MatchS
         damage_share=round(dmg_share, 3),
         objective_damage_share=round(obj_dmg_share, 3),
         early_solo_deaths=early_solo,
+        minute_series=minute_series,
+        my_cs_series=my_cs_series,
+        enemy_cs_series=enemy_cs_series,
+        my_gold_series=my_gold_series,
+        enemy_gold_series=enemy_gold_series,
     )
 
 

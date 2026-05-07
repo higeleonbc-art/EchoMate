@@ -42,6 +42,9 @@ from coach_prompts import build_review_prompt
 from coach_ai import coach_chat
 from coach_review_view import open_review_in_browser
 from coach_rank import resolve_target_rank
+from coach_summary import MultiMatchSummary, open_summary_in_browser
+from adc_knowledge import get_knowledge
+import coach_profile
 
 
 # ---------------------------------------------------------------------------
@@ -110,17 +113,30 @@ def render_review(review: Review) -> str:
 def resolve_puuid(client: RiotAPIClient, args: argparse.Namespace) -> str:
     if args.puuid:
         return args.puuid
-    if "#" not in args.riot_id:
-        sys.exit('--riot-id は "Name#TAG" 形式で指定してください')
-    name, tag = args.riot_id.split("#", 1)
+
+    # --riot-id が無ければプロファイルから読む
+    riot_id = args.riot_id or coach_profile.get_riot_id()
+    if not riot_id:
+        sys.exit('Riot ID が指定されていません。--riot-id "Name#TAG" を指定するか、'
+                 '事前に coach_pick.py 等で保存してください')
+    if "#" not in riot_id:
+        sys.exit(f'Riot ID は "Name#TAG" 形式で指定してください (got: {riot_id!r})')
+
+    # 明示指定はプロファイルへ保存
+    if args.riot_id and args.riot_id != coach_profile.get_riot_id():
+        coach_profile.set_riot_id(args.riot_id)
+
+    name, tag = riot_id.split("#", 1)
     account = client.get_account_by_riot_id(name.strip(), tag.strip())
     return account["puuid"]
 
 
 def run_review(args: argparse.Namespace) -> int:
-    if not (args.riot_id or args.puuid):
-        print("ERROR: --riot-id または --puuid を指定してください（--live 以外）",
-              file=sys.stderr)
+    # riot-id / puuid / プロファイル のどれかが必要
+    has_id = args.riot_id or args.puuid or coach_profile.get_riot_id()
+    if not has_id:
+        print("ERROR: Riot ID未指定。--riot-id または --puuid を指定するか、"
+              "プロファイルに保存してください", file=sys.stderr)
         return 1
 
     if not os.environ.get("RIOT_API_KEY"):
@@ -151,6 +167,12 @@ def run_review(args: argparse.Namespace) -> int:
             print("対象試合がありません")
             return 0
 
+        # 複数試合の場合は集計サマリモード（個別LLMコメントは省略）
+        if args.count > 1:
+            return _run_multi_summary(client, match_ids, puuid, target_rank,
+                                      show_console=show_console, show_html=show_html)
+
+        # 単発レビュー（フル LLM + HTML）
         for mid in match_ids:
             try:
                 match = client.get_match(mid)
@@ -183,6 +205,51 @@ def run_review(args: argparse.Namespace) -> int:
                 path = open_review_in_browser(review, comment or None)
                 print(f"  HTMLレビュー: {path}")
 
+    return 0
+
+
+def _run_multi_summary(client: RiotAPIClient, match_ids: list[str], puuid: str,
+                       target_rank: str, show_console: bool, show_html: bool) -> int:
+    """count > 1 のとき: 全マッチを集計して summary HTMLを表示"""
+    statlist = []
+    for i, mid in enumerate(match_ids, 1):
+        try:
+            match = client.get_match(mid)
+            timeline = client.get_match_timeline(mid)
+        except RiotAPIError as e:
+            print(f"  [{i}] {mid}: 取得失敗 {e}", file=sys.stderr)
+            continue
+        review = build_review(match, timeline, puuid, rank=target_rank)
+        if not review:
+            continue
+        statlist.append(review.stats)
+        if show_console:
+            s = review.stats
+            print(f"  [{i}] {s.champion:>13} {('WIN ' if s.win else 'LOSS')} "
+                  f"KDA {s.kills}/{s.deaths}/{s.assists} "
+                  f"CS/min {s.cs_per_min} vs {s.enemy_adc}")
+
+    if not statlist:
+        print("レビュー可能な試合がありませんでした")
+        return 0
+
+    bm = get_knowledge().benchmark(target_rank) or {}
+    summary = MultiMatchSummary(matches=statlist, target_rank=target_rank, benchmark=bm)
+
+    if show_console:
+        print()
+        print(f"==== {summary.n} 試合集計 (target {target_rank}) ====")
+        print(f"  Win Rate:    {int(summary.win_rate * 100)}%")
+        print(f"  CS/min:      {summary.avg_cs_per_min:.2f}  (target {bm.get('cs_per_min')})")
+        print(f"  CS@10:       {summary.avg_cs_at_10:.0f}  (target {bm.get('cs_at_10')})")
+        print(f"  KDA:         {summary.avg_kda:.2f}  (target {bm.get('kda')})")
+        print(f"  Deaths/game: {summary.avg_deaths:.1f}  (max {bm.get('deaths_max')})")
+        print(f"  Vision:      {summary.avg_vision:.0f}  (min {bm.get('vision_score_min')})")
+        print(f"  Gold@15 Δ:   {int(summary.avg_gold_diff_15):+d}")
+
+    if show_html:
+        path = open_summary_in_browser(summary)
+        print(f"\nSummary HTML: {path}")
     return 0
 
 

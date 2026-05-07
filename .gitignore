@@ -25,4 +25,9 @@ characters.json
 curiosity_list.json
 game_knowledge.json
 
+# ADC Coach のローカルプロファイル（Riot IDなど個人設定）
+.coach_profile.json
+.coach_kpi.db
+.coach_personal.json
+
 scratch/

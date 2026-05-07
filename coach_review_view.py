@@ -10,6 +10,7 @@ Reviewオブジェクト + 任意のLLMコメントから自己完結HTMLを生�
 from __future__ import annotations
 
 import html
+import json as _json
 import logging
 import tempfile
 import webbrowser
@@ -29,11 +30,20 @@ SEVERITY_STYLE = {
 }
 
 CATEGORY_ICON = {
-    "cs":      "🌾",
-    "deaths":  "💀",
-    "vision":  "👁",
-    "matchup": "⚔",
-    "macro":   "🗺",
+    "cs":               "🌾",
+    "deaths":           "💀",
+    "vision":           "👁",
+    "matchup":          "⚔",
+    "macro_gold":       "💰",
+    "macro_damage":     "⚡",
+    "macro_objective":  "🐉",
+}
+
+# LS / CURTIS / MIXED の哲学スタイル
+SCHOOL_STYLE = {
+    "LS":     ("#e74c3c", "LS",     "ミクロ・基礎"),
+    "CURTIS": ("#3498db", "CURTIS", "マクロ・wave"),
+    "MIXED":  ("#9b59b6", "MIXED",  "両軸"),
 }
 
 
@@ -83,10 +93,20 @@ def _render_stat_card(label: str, value: str, target: Optional[str] = None,
 def _render_improvement(point) -> str:
     color, sev_label = SEVERITY_STYLE.get(point.severity, ("#8a8a8a", "info"))
     icon = CATEGORY_ICON.get(point.category, "•")
+
+    # school (LS/CURTIS/MIXED) は match_review.ImprovementPoint にあり
+    school = getattr(point, "school", "MIXED")
+    s_color, s_label, s_desc = SCHOOL_STYLE.get(school, ("#8a8a8a", school, ""))
+    school_badge = (
+        f'<span class="school-badge" style="background:{s_color}" title="{_esc(s_desc)}">'
+        f'{_esc(s_label)}</span>'
+    )
+
     return f"""
     <div class="improvement-card" style="border-left:4px solid {color}">
       <div class="imp-head">
         <span class="sev-badge" style="background:{color}">{sev_label}</span>
+        {school_badge}
         <span class="cat-icon">{icon}</span>
         <span class="cat-name">{_esc(point.category)}</span>
       </div>
@@ -229,13 +249,17 @@ body {
   font-size: 12px;
   margin-bottom: 8px;
 }
-.sev-badge {
+.sev-badge, .school-badge {
   padding: 2px 8px;
   border-radius: 3px;
   color: #fff;
   font-weight: 600;
   font-size: 10px;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.school-badge {
+  cursor: help;
 }
 .cat-icon { font-size: 14px; }
 .cat-name { color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.05em; }
@@ -285,6 +309,68 @@ body {
   margin-bottom: 4px;
 }
 
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.kpi-card {
+  background: var(--bg-card);
+  border-radius: 8px;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  position: relative;
+}
+.kpi-card .kpi-type {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+  margin-bottom: 4px;
+}
+.kpi-card .kpi-numbers {
+  font-size: 14px;
+  font-family: "SF Mono", Consolas, monospace;
+  color: var(--fg);
+}
+.kpi-card .kpi-result {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 3px;
+  color: #fff;
+  margin-top: 8px;
+  letter-spacing: 0.05em;
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 700px) {
+  .chart-grid { grid-template-columns: 1fr; }
+}
+.chart-card {
+  background: var(--bg-card);
+  border-radius: 8px;
+  padding: 20px 20px 16px;
+  border: 1px solid var(--border);
+}
+.chart-card h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.chart-card canvas {
+  width: 100% !important;
+  height: 220px !important;
+}
+
 footer {
   margin-top: 60px;
   padding-top: 20px;
@@ -296,7 +382,40 @@ footer {
 """
 
 
-def render_review_html(review: Review, llm_comment: Optional[str] = None) -> str:
+def _render_prev_kpi_section(prev_kpi_results: Optional[list]) -> str:
+    """前回設定したKPIの達成度を表示するセクション"""
+    if not prev_kpi_results:
+        return ""
+    cards = []
+    for r in prev_kpi_results:
+        achieved = r.get("achieved")
+        target = r.get("target")
+        actual = r.get("actual")
+        op = r.get("op", ">=")
+        kpi_type = r.get("kpi_type", "?")
+        color = "#5fd17a" if achieved else "#ef5350"
+        label = "達成" if achieved else "未達"
+        cards.append(f"""
+        <div class="kpi-card" style="border-left:4px solid {color}">
+          <div class="kpi-type">{_esc(kpi_type)}</div>
+          <div class="kpi-numbers">
+            target {op} {target} / actual {actual}
+          </div>
+          <span class="kpi-result" style="background:{color}">{label}</span>
+        </div>
+        """)
+    return f"""
+    <div class="section">
+      <h2>前回KPI評価</h2>
+      <div class="kpi-grid">
+        {"".join(cards)}
+      </div>
+    </div>
+    """
+
+
+def render_review_html(review: Review, llm_comment: Optional[str] = None,
+                        prev_kpi_results: Optional[list] = None) -> str:
     s = review.stats
     bm = review.benchmark
 
@@ -340,6 +459,38 @@ def render_review_html(review: Review, llm_comment: Optional[str] = None) -> str
         spans = "".join(f"<span>{t}min</span>" for t in s.death_timestamps_min)
         deaths_html = f'<div class="section"><h2>Death Timestamps</h2><div class="deaths-list">{spans}</div></div>'
 
+    # ---- 時系列グラフ ----
+    charts_html = ""
+    if s.my_cs_series:
+        chart_data = {
+            "labels": s.minute_series,
+            "my_cs": s.my_cs_series,
+            "enemy_cs": s.enemy_cs_series,
+            "my_gold": s.my_gold_series,
+            "enemy_gold": s.enemy_gold_series,
+            "my_label": s.champion or "You",
+            "enemy_label": s.enemy_adc or "Enemy ADC",
+        }
+        chart_data_json = _json.dumps(chart_data)
+        charts_html = f"""
+        <div class="section">
+          <h2>Lane Phase Trends</h2>
+          <div class="chart-grid">
+            <div class="chart-card">
+              <h3>CS over time</h3>
+              <canvas id="csChart"></canvas>
+            </div>
+            <div class="chart-card">
+              <h3>Gold over time</h3>
+              <canvas id="goldChart"></canvas>
+            </div>
+          </div>
+        </div>
+        <script>
+        window.__chartData = {chart_data_json};
+        </script>
+        """
+
     if review.points:
         improvements_html = "\n".join(_render_improvement(p) for p in review.points)
     else:
@@ -356,7 +507,51 @@ def render_review_html(review: Review, llm_comment: Optional[str] = None) -> str
         </div>
         """
 
+    prev_kpi_html = _render_prev_kpi_section(prev_kpi_results)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    chart_script = """
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+    (function() {
+      if (!window.__chartData) return;
+      var d = window.__chartData;
+      var common = {
+        type: 'line',
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#e8e8e8' } } },
+          scales: {
+            x: { ticks: { color: '#9b9b9b' }, grid: { color: '#2a2a2a' },
+                 title: { display: true, text: 'minute', color: '#9b9b9b' } },
+            y: { ticks: { color: '#9b9b9b' }, grid: { color: '#2a2a2a' } }
+          },
+          interaction: { mode: 'index', intersect: false }
+        }
+      };
+      var csCtx = document.getElementById('csChart');
+      if (csCtx) new Chart(csCtx, Object.assign({}, common, {
+        data: {
+          labels: d.labels,
+          datasets: [
+            { label: d.my_label, data: d.my_cs, borderColor: '#5fd17a', backgroundColor: 'rgba(95,209,122,0.1)', tension: 0.25, fill: false },
+            { label: d.enemy_label, data: d.enemy_cs, borderColor: '#ef5350', backgroundColor: 'rgba(239,83,80,0.1)', tension: 0.25, fill: false, borderDash: [4,4] }
+          ]
+        }
+      }));
+      var goldCtx = document.getElementById('goldChart');
+      if (goldCtx) new Chart(goldCtx, Object.assign({}, common, {
+        data: {
+          labels: d.labels,
+          datasets: [
+            { label: d.my_label, data: d.my_gold, borderColor: '#f5b942', backgroundColor: 'rgba(245,185,66,0.1)', tension: 0.25, fill: false },
+            { label: d.enemy_label, data: d.enemy_gold, borderColor: '#5fa9d1', backgroundColor: 'rgba(95,169,209,0.1)', tension: 0.25, fill: false, borderDash: [4,4] }
+          ]
+        }
+      }));
+    })();
+    </script>
+    """
 
     return f"""<!DOCTYPE html>
 <html lang="ja">
@@ -378,12 +573,16 @@ def render_review_html(review: Review, llm_comment: Optional[str] = None) -> str
     </div>
   </header>
 
+  {prev_kpi_html}
+
   <div class="section">
     <h2>Stats vs Benchmark</h2>
     <div class="stats-grid">
       {stats_grid}
     </div>
   </div>
+
+  {charts_html}
 
   {deaths_html}
 
@@ -398,6 +597,7 @@ def render_review_html(review: Review, llm_comment: Optional[str] = None) -> str
     Generated {timestamp} · LoL ADC Coach
   </footer>
 </div>
+{chart_script}
 </body>
 </html>
 """
@@ -408,9 +608,10 @@ def render_review_html(review: Review, llm_comment: Optional[str] = None) -> str
 # ---------------------------------------------------------------------------
 
 def write_review_html(review: Review, llm_comment: Optional[str] = None,
-                      out_dir: Optional[Path] = None) -> Path:
+                      out_dir: Optional[Path] = None,
+                      prev_kpi_results: Optional[list] = None) -> Path:
     """HTMLを書き出してパスを返す（ブラウザは開かない）"""
-    html_text = render_review_html(review, llm_comment)
+    html_text = render_review_html(review, llm_comment, prev_kpi_results)
     out_dir = out_dir or Path(tempfile.gettempdir())
     out_dir.mkdir(parents=True, exist_ok=True)
     safe_id = "".join(c for c in review.stats.match_id if c.isalnum() or c in "_-")
@@ -420,9 +621,10 @@ def write_review_html(review: Review, llm_comment: Optional[str] = None,
 
 
 def open_review_in_browser(review: Review, llm_comment: Optional[str] = None,
-                           out_dir: Optional[Path] = None) -> Path:
+                           out_dir: Optional[Path] = None,
+                           prev_kpi_results: Optional[list] = None) -> Path:
     """HTML生成 → デフォルトブラウザで開く。書き出し先パスを返す。"""
-    path = write_review_html(review, llm_comment, out_dir)
+    path = write_review_html(review, llm_comment, out_dir, prev_kpi_results)
     webbrowser.open(path.as_uri())
     return path
 
