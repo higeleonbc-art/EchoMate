@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>ADC Coach Hub</title>
+<link rel="stylesheet" href="main.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">⚔</span>
+    <span class="brand-text">ADC Coach</span>
+  </div>
+  <nav class="tabs">
+    <button class="tab active" data-tab="latest">Latest Match</button>
+    <button class="tab"        data-tab="trend">Trend</button>
+    <button class="tab"        data-tab="personal">Personal</button>
+    <button class="tab"        data-tab="kpi">KPI History</button>
+    <button class="tab"        data-tab="champ">Champ Select</button>
+    <button class="tab"        data-tab="settings">Settings</button>
+  </nav>
+  <div class="status" id="statusBar">
+    <span class="dot dot-grey" id="statusDot"></span>
+    <span id="statusText">initializing…</span>
+  </div>
+</header>
+
+<main class="main">
+
+  <!-- ========== Latest Match ========== -->
+  <section class="panel active" data-panel="latest">
+    <div class="panel-header">
+      <h2>Latest Match</h2>
+      <div class="panel-actions">
+        <select id="matchPicker"></select>
+        <button class="btn" id="refreshLatest">Refresh</button>
+      </div>
+    </div>
+    <div class="iframe-wrap">
+      <iframe id="latestFrame" sandbox="allow-scripts allow-same-origin"></iframe>
+    </div>
+  </section>
+
+  <!-- ========== Trend ========== -->
+  <section class="panel" data-panel="trend">
+    <div class="panel-header">
+      <h2>Trend (recent matches)</h2>
+      <div class="panel-actions">
+        <label>count:
+          <select id="trendCount">
+            <option value="3">3</option>
+            <option value="5" selected>5</option>
+            <option value="10">10</option>
+            <option value="20">20</option>
+          </select>
+        </label>
+        <button class="btn" id="refreshTrend">Refresh</button>
+      </div>
+    </div>
+    <div class="iframe-wrap">
+      <iframe id="trendFrame" sandbox="allow-scripts allow-same-origin"></iframe>
+    </div>
+  </section>
+
+  <!-- ========== Personal Benchmark ========== -->
+  <section class="panel" data-panel="personal">
+    <div class="panel-header">
+      <h2>Personal Benchmark</h2>
+      <div class="panel-actions">
+        <label>sample:
+          <select id="personalCount">
+            <option value="20">20</option>
+            <option value="30" selected>30</option>
+            <option value="50">50</option>
+          </select>
+        </label>
+        <button class="btn" id="recomputePersonal">Recompute</button>
+      </div>
+    </div>
+    <div class="content" id="personalContent">
+      <div class="empty">Click Recompute to scan your recent matches.</div>
+    </div>
+  </section>
+
+  <!-- ========== KPI History ========== -->
+  <section class="panel" data-panel="kpi">
+    <div class="panel-header">
+      <h2>KPI History</h2>
+      <div class="panel-actions">
+        <button class="btn" id="refreshKpi">Refresh</button>
+      </div>
+    </div>
+    <div class="content" id="kpiContent">
+      <div class="empty">No KPI history yet.</div>
+    </div>
+  </section>
+
+  <!-- ========== Champ Select ========== -->
+  <section class="panel" data-panel="champ">
+    <div class="panel-header">
+      <h2>Champ Select Assistant</h2>
+      <div class="panel-actions">
+        <span id="lcuConn" class="badge">LCU: ?</span>
+      </div>
+    </div>
+    <div class="content" id="champContent">
+      <div class="empty">Waiting for champ select to start in League client…</div>
+    </div>
+  </section>
+
+  <!-- ========== Settings ========== -->
+  <section class="panel" data-panel="settings">
+    <div class="panel-header">
+      <h2>Settings</h2>
+    </div>
+    <div class="content settings-form">
+      <div class="field">
+        <label>Riot ID (Name#TAG)</label>
+        <input type="text" id="settingRiotId" placeholder="例: ランデュイン毒髭#HIGE">
+      </div>
+      <div class="field">
+        <label>Platform</label>
+        <select id="settingPlatform">
+          <option value="jp1">jp1 (Japan)</option>
+          <option value="kr">kr (Korea)</option>
+          <option value="na1">na1 (NA)</option>
+          <option value="euw1">euw1 (EUW)</option>
+          <option value="eun1">eun1 (EUNE)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Target Rank</label>
+        <select id="settingRank">
+          <option value="auto">auto (current rank + 1)</option>
+          <option value="IRON">IRON</option>
+          <option value="BRONZE">BRONZE</option>
+          <option value="SILVER">SILVER</option>
+          <option value="GOLD">GOLD</option>
+          <option value="PLATINUM">PLATINUM</option>
+          <option value="EMERALD">EMERALD</option>
+          <option value="DIAMOND">DIAMOND</option>
+          <option value="MASTER">MASTER</option>
+          <option value="GRANDMASTER">GRANDMASTER</option>
+          <option value="CHALLENGER">CHALLENGER</option>
+        </select>
+      </div>
+      <div class="field-row">
+        <button class="btn primary" id="saveSettings">Save</button>
+        <button class="btn" id="reloadAll">Reload all panels</button>
+      </div>
+      <div class="settings-info">
+        <h3>Auto-detect features</h3>
+        <ul>
+          <li>LoL Client <strong>ChampSelect</strong> 検知 → Champ Selectタブ自動切替+tip表示</li>
+          <li>LoL Client <strong>InProgress</strong> 検知 → Live Overlay 自動起動</li>
+          <li>LoL Client <strong>EndOfGame</strong> 検知 → Latest Matchタブ自動更新</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script src="main.js"></script>
+</body>
+</html>
