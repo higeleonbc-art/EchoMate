@@ -118,7 +118,23 @@ html, body {
 .btn:hover { background: var(--bg-card-hover); border-color: var(--accent-strong); }
 .btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
 .btn.primary:hover { background: var(--accent); }
+.btn.danger { color: var(--danger); }
+.btn.danger:hover { background: rgba(239,83,80,0.12); border-color: var(--danger); }
 .btn:disabled { opacity: 0.5; cursor: wait; }
+
+.kpi-table .delete-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px 8px; border-radius: 4px;
+  font-size: 11px;
+}
+.kpi-table .delete-btn:hover {
+  background: rgba(239,83,80,0.12);
+  border-color: var(--danger);
+  color: var(--danger);
+}
 
 select, input[type=text] {
   background: var(--bg-card);

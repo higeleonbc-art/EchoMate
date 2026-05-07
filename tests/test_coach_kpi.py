@@ -74,6 +74,26 @@ def test_no_double_save():
     assert n2 == 0  # 同match_idの再保存はskip
 
 
+def test_clear_all():
+    _temp_db()
+    coach_kpi.save_kpis("M1", [("kda", 3.0, ">=")])
+    coach_kpi.save_kpis("M2", [("vision_score", 22.0, ">=")])
+    n = coach_kpi.clear_all()
+    assert n == 2
+    assert coach_kpi.history() == []
+
+
+def test_delete_by_id():
+    _temp_db()
+    coach_kpi.save_kpis("M1", [("kda", 3.0, ">="), ("cs_at_10", 75.0, ">=")])
+    rows = coach_kpi.history()
+    assert len(rows) == 2
+    target_id = rows[0]["id"]
+    assert coach_kpi.delete_by_id(target_id) is True
+    assert len(coach_kpi.history()) == 1
+    assert coach_kpi.delete_by_id(99999) is False  # 存在しない
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

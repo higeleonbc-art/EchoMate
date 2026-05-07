@@ -344,6 +344,21 @@ class CoachAPI:
             logger.warning("KPI history failed: %s", e)
             return []
 
+    def clear_kpi_history(self) -> dict:
+        try:
+            n = coach_kpi.clear_all()
+            return {"cleared": n}
+        except Exception as e:
+            logger.warning("clear_kpi_history failed: %s", e)
+            return {"cleared": 0, "error": str(e)}
+
+    def delete_kpi_entry(self, entry_id: int) -> dict:
+        try:
+            ok = coach_kpi.delete_by_id(int(entry_id))
+            return {"deleted": ok}
+        except Exception as e:
+            return {"deleted": False, "error": str(e)}
+
     # ============================================================
     # Champ Select
     # ============================================================

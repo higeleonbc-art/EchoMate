@@ -25,7 +25,6 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -187,3 +186,20 @@ def history(limit: int = 20) -> list[dict]:
             "SELECT * FROM kpi_history ORDER BY set_at DESC LIMIT ?", (limit,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def clear_all() -> int:
+    """全KPI履歴をクリア。削除件数を返す"""
+    with _conn() as conn:
+        before = conn.execute("SELECT COUNT(*) FROM kpi_history").fetchone()[0]
+        conn.execute("DELETE FROM kpi_history")
+        conn.commit()
+    return before
+
+
+def delete_by_id(entry_id: int) -> bool:
+    """1件だけ削除"""
+    with _conn() as conn:
+        cur = conn.execute("DELETE FROM kpi_history WHERE id=?", (entry_id,))
+        conn.commit()
+        return cur.rowcount > 0

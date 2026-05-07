@@ -183,27 +183,49 @@ async function loadKpi() {
                     : r.achieved === 0 ? '<span class="missed">[NG]</span>'
                     : '<span class="pending">pending</span>';
       const actual = r.actual === null ? "-" : r.actual;
-      return `<tr>
+      return `<tr data-id="${r.id}">
         <td>${r.set_at.substring(0, 16)}</td>
         <td>${r.from_match}</td>
         <td>${r.kpi_type}</td>
         <td class="num">${r.op} ${r.target}</td>
         <td class="num">${actual}</td>
         <td>${status}</td>
+        <td><button class="delete-btn" data-del-id="${r.id}">delete</button></td>
       </tr>`;
     }).join("");
     root.innerHTML = `
       <table class="kpi-table">
         <thead><tr>
           <th>Set at</th><th>Match</th><th>Type</th>
-          <th>Target</th><th>Actual</th><th>Result</th>
+          <th>Target</th><th>Actual</th><th>Result</th><th></th>
         </tr></thead>
         <tbody>${tableRows}</tbody>
       </table>
     `;
+    // 個別delete
+    root.querySelectorAll(".delete-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const id = parseInt(btn.dataset.delId, 10);
+        const res = await pywebview.api.delete_kpi_entry(id);
+        if (res.deleted) {
+          toast("Deleted");
+          loadKpi();
+        } else {
+          toast("Delete failed", "error");
+        }
+      });
+    });
   } catch (e) { toast("KPI load failed: " + e, "error"); }
 }
 document.getElementById("refreshKpi").addEventListener("click", loadKpi);
+document.getElementById("clearKpi").addEventListener("click", async () => {
+  if (!confirm("全てのKPI履歴を削除します。よろしいですか？")) return;
+  try {
+    const res = await pywebview.api.clear_kpi_history();
+    toast(`Cleared ${res.cleared} entries`);
+    loadKpi();
+  } catch (e) { toast("Clear failed: " + e, "error"); }
+});
 
 // ======== Champ Select ========
 async function loadChampSelect() {
