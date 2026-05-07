@@ -12,8 +12,17 @@ user_profile.json
 .env
 .clauderules
 
+# Claude Code ローカル設定
+.claude/settings.local.json
+
 # AI会話記憶
 ai_memory.db
 ai_temp_memory.db
+
+# 旧EchoMate（legacy）由来のランタイム/設定ファイル
+# 新コードでは使わず、履歴は echomate-legacy ブランチに残る
+characters.json
+curiosity_list.json
+game_knowledge.json
 
 scratch/
