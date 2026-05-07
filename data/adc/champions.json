@@ -273,6 +273,17 @@
       "best_supports": ["Lulu", "Janna", "Tahm Kench"],
       "tags": ["hyper-carry", "1v1", "true-damage"]
     },
+    "Yunara": {
+      "id": "804", "name": "Yunara", "display": "ユナラ",
+      "range": 575, "difficulty": 4,
+      "lane_phase": "average", "scaling": "strong",
+      "power_spikes": ["要調査（新リリースADC）"],
+      "weaknesses": ["要調査"],
+      "playstyle": "Patch 16.9で追加された新ADC「the Unbroken Faith」。詳細未調査・要アップデート。射程575/diff4のスタンダード型マークスマン。",
+      "key_items": ["要調査"],
+      "best_supports": ["要調査"],
+      "tags": ["new-champion", "needs-update"]
+    },
     "Xayah": {
       "id": "498", "name": "Xayah", "display": "ザヤ",
       "range": 525, "difficulty": 5,

@@ -1,38 +1,212 @@
 {
   "_meta": {
-    "description": "ADC vs ADC matchup matrix. Lookup: matchups[my_champ][enemy_champ]",
-    "score": "-2 (very bad) to +2 (very good); 0 = even",
-    "version": "0.1.0"
+    "description": "ADC vs ADC matchup overrides. Lookup: matchups[my_champ][enemy_champ]",
+    "version": "0.3.0",
+    "last_updated": "2026-05-08",
+    "score_scale": "-2 (very bad) to +2 (very good); 0 = even",
+    "fallback": "adc_knowledge.infer_matchup_score() が lane_phase 差から自動推定。本ファイルは tip 付き重要ペアと推定値のオーバーライドのみ。"
   },
   "matchups": {
-    "Caitlyn": {
-      "Jinx":    { "score":  1, "tip": "射程と早期パワーで圧倒。Lv2で必ずトレード仕掛ける。" },
-      "Ezreal":  { "score":  1, "tip": "射程有利。Eが上がる前のLv1-5でガンガン削る。" },
-      "Ashe":    { "score":  0, "tip": "射程同等。罠でゾーンしてCSで差をつける。" },
-      "Lucian":  { "score": -1, "tip": "Lv2でLucian側が強い。Lv2を先に取らせない。" },
-      "Vayne":   { "score":  2, "tip": "レーン圧倒可能。罠+Q連打で30%以下にしてW処刑。" }
-    },
-    "Ezreal": {
-      "Caitlyn": { "score": -1, "tip": "射程不利。マナ管理してWQコンボのみで安全プレイ。Muramanaまで耐える。" },
-      "Jinx":    { "score":  0, "tip": "Jinxのレーン弱さを突けるが、無理にオールインしない。" },
-      "Lucian":  { "score": -1, "tip": "Lv1-5は劣勢。Eで距離を保ちQ poke優先。" },
-      "Draven":  { "score": -2, "tip": "オールインに非常に弱い。Eを温存・サポにケアさせる。" }
-    },
-    "Jinx": {
-      "Caitlyn": { "score": -1, "tip": "Lv1-5は耐えるだけ。Kraken完成までCSのみ意識。" },
-      "Draven":  { "score": -2, "tip": "オールインで負ける。Lv6まで安全に。サポ次第。" },
-      "Ashe":    { "score":  0, "tip": "射程不利だがスケーリングで逆転。" },
-      "Vayne":   { "score":  1, "tip": "レーンではJinxが強い。Lv6前に差をつける。" }
+    "Aphelios": {
+      "Caitlyn":     { "score": -2, "tip": "射程差125 + Lv2圧力で苦しい。Severum/Crescendumロード時のみ反撃。基本Eで距離取りCSのみ意識。" },
+      "Draven":      { "score": -2, "tip": "オールイン耐性ゼロ。武器ローテで Calibrum (long range) 維持して触らせない。Lv6まで耐え。" },
+      "Lucian":      { "score": -1, "tip": "Lv2-5は劣勢。Calibrum/Severum 中心で安全プレイ、Lv6+で互角。" },
+      "Ezreal":      { "score":  0, "tip": "射程同等。Aphelios側のRが当たればpick取れる。Eを引き出してから攻め。" },
+      "Vayne":       { "score":  1, "tip": "射程・武器多様性で優位。Crescendum以外でも射程勝ち。" },
+      "Jinx":        { "score":  1, "tip": "Aphelios側のCalibrum poke でレーン削れる。Lv11以降のJinxスケールに注意。" }
     },
     "Ashe": {
-      "Caitlyn": { "score":  0, "tip": "射程同等。Wでゾーン妨害して罠破壊。" },
-      "Jinx":    { "score":  0, "tip": "スケーリング勝負。中盤までに差を作る。" },
-      "Vayne":   { "score":  1, "tip": "射程・スロウ有利。Lv6前にLv差を作る。" }
+      "Caitlyn":     { "score":  0, "tip": "射程僅差(600 vs 650)、Wでゾーン妨害して罠破壊。CSキープを最優先。" },
+      "Draven":      { "score": -1, "tip": "オールイン負け。Wスロウとサポート連携で回避優先。Lv6 ult engageで反撃。" },
+      "Jinx":        { "score":  0, "tip": "Lv1-5はAshe優位、Lv11以降逆転。中盤までに差をつける。" },
+      "Vayne":       { "score":  1, "tip": "射程・スロウ有利。Lv6前にLv差を作る。" },
+      "Kalista":     { "score": -1, "tip": "Kalistaの全力レーンに崩される。サポと一緒に動く。" },
+      "Lucian":      { "score": -1, "tip": "Lv2-5劣勢。距離取ってCSのみ。" },
+      "Twitch":      { "score":  1, "tip": "Twitchより射程あり。ステルス警戒、コントロールワード必須。" }
+    },
+    "Caitlyn": {
+      "Aphelios":    { "score":  2, "tip": "射程差で圧倒。Lv2必ずトレード。罠で武器交換タイミング読む。" },
+      "Ashe":        { "score":  0, "tip": "射程同等。罠でゾーンしてCSで差をつける。WスロウへのE回避はAshe側次第。" },
+      "Draven":      { "score": -1, "tip": "Lv1-3 オールインで負ける。距離キープ + サポと連携で凌ぐ。Lv6以降はCaitlyn有利。" },
+      "Ezreal":      { "score":  1, "tip": "射程有利。Eが上がる前のLv1-5で削る。Eで距離取られたらpush先。" },
+      "Jhin":        { "score":  1, "tip": "Jhinの4発間にQ pokeで圧倒。reload時に強引に攻め。" },
+      "Jinx":        { "score":  1, "tip": "Lv2先取で圧倒。Kraken完成前にスノーボール。" },
+      "Kaisa":       { "score":  1, "tip": "射程アドバンテージ大。E突進距離外からpoke。Eを使わせて反撃。" },
+      "Kalista":     { "score":  0, "tip": "Kalistaのジャンプで距離詰められる前にW罠。Lv1の全力に注意。" },
+      "Lucian":      { "score": -1, "tip": "Lv2でLucian側が強い。Lv2を先に取らせない。Eで近づかれたら罠で逃げ。" },
+      "MissFortune": { "score":  1, "tip": "射程有利、MFのE bouncing pokeを罠で阻害。Lv6 ultはinterruptで止める。" },
+      "Samira":      { "score":  1, "tip": "Samiraの近接特性でCaitlyn射程有利。E突進されたら罠+Q連打。" },
+      "Sivir":       { "score":  1, "tip": "Sivirのspell shieldを引き出してから罠を置く。スキル使用順を意識。" },
+      "Smolder":     { "score":  2, "tip": "Smolderスタック前に圧倒。Lv6前にLP差作る。" },
+      "Tristana":    { "score":  1, "tip": "Tristana早期は射程不利。Lv6 (range up) 前に決める。" },
+      "Twitch":      { "score":  2, "tip": "Twitchの低射程で圧勝。コントロールワードでステルス対応。" },
+      "Varus":       { "score":  0, "tip": "射程ほぼ同等(575 vs 650)。Q pokeにEで距離取り。" },
+      "Vayne":       { "score":  2, "tip": "レーン圧倒可能。罠+Q連打で30%以下にしてW処刑。" },
+      "Yunara":      { "score":  1, "tip": "射程75差で優位。新ADCなのでクセ要観察、Q連発で削り。" },
+      "Zeri":        { "score":  0, "tip": "Zeriの機動性に注意。罠でEルートを塞ぐ。" }
+    },
+    "Corki": {
+      "Caitlyn":     { "score": -1, "tip": "射程差125 + Q poke で苦しい。Package完成まで耐え、Roamで価値出す。" },
+      "Draven":      { "score": -1, "tip": "オールイン負け。Q磁力 で距離取り、サポートと連携。" },
+      "Ezreal":      { "score":  0, "tip": "ハイブリダメ同士、Manamuneゴール争い。CSと poke精度勝負。" },
+      "Vayne":       { "score":  1, "tip": "Corki Q+Wコンボでレーン勝ち。Lv6前に決めたい。" }
+    },
+    "Draven": {
+      "Aphelios":    { "score":  2, "tip": "Lv1から殴り倒す。アックスキープでサスティン圧倒。武器ロードを待たせない。" },
+      "Caitlyn":     { "score":  1, "tip": "Lv1-3 オールインでアックス溜めて勝つ。Lv6以降は不利、序盤のキルで雪だるま。" },
+      "Ashe":        { "score":  1, "tip": "Wスロウだけが脅威。アックスキャッチ続けて圧倒。Lv6 ult avoid意識。" },
+      "Ezreal":      { "score":  2, "tip": "Lv1から殴り倒す。Eを引き出してから全力。サポcc + アックスでkill。" },
+      "Jinx":        { "score":  2, "tip": "Lv6前に殺し切る。Lv11 Jinxを通さない。" },
+      "Lucian":      { "score":  0, "tip": "両者lane dominant。Lv2先取とアックス管理の勝負。" },
+      "Vayne":       { "score":  2, "tip": "Vayneレーン弱い時期に殺し切る。Lv11以降を通さない。" },
+      "Kalista":     { "score":  0, "tip": "Kalistaの全力レーンに対抗できる唯一級。アックスでサスティン勝ち。" }
+    },
+    "Ezreal": {
+      "Caitlyn":     { "score": -1, "tip": "射程不利。マナ管理してWQコンボのみ。Manamune完成まで耐える。" },
+      "Draven":      { "score": -2, "tip": "オールインに非常に弱い。Eを温存・サポにケアさせる。Doran's Shield推奨。" },
+      "Jhin":        { "score": -1, "tip": "Jhin の Lv2 W root に注意。E使用時の硬直を狙われる。" },
+      "Jinx":        { "score":  0, "tip": "Jinxのレーン弱さを突けるが、無理にオールインしない。スケール勝負。" },
+      "Lucian":      { "score": -1, "tip": "Lv1-5は劣勢。Eで距離保ちQ poke優先。" },
+      "MissFortune": { "score":  0, "tip": "MF Q-bounce poke 注意。Eで距離キープ。" },
+      "Vayne":       { "score":  0, "tip": "Vayne近距離タイプ。Eで距離取り続ければ問題なし。" },
+      "Kalista":     { "score": -2, "tip": "Kalistaの機動性に距離取られない。Doran's Shield + 安全プレイ。" },
+      "Samira":      { "score":  0, "tip": "Samiraの突進をEでcounter。エンゲージ拒否すれば互角以上。" }
+    },
+    "Jhin": {
+      "Caitlyn":     { "score": -1, "tip": "Caitlyn 射程差で poke 受ける。Wルートで距離詰めて4発確実当て。" },
+      "Draven":      { "score": -1, "tip": "Dravenオールインに弱い。Lv2 W rootでカウンター。" },
+      "Ezreal":      { "score":  1, "tip": "Ezrealより射程と burst あり。Wでslow/rootから4発。" },
+      "Lucian":      { "score":  0, "tip": "Lv2 W vs Lv2 Q+passive。Wが当たれば勝つ。" },
+      "Jinx":        { "score":  1, "tip": "Lv2 W rootで早期kill狙う。Jinxスケール前に決める。" },
+      "Vayne":       { "score":  1, "tip": "Vayne近距離をWでpick。Lv11前に倒す。" }
+    },
+    "Jinx": {
+      "Caitlyn":     { "score": -1, "tip": "Lv1-5は耐えるだけ。Kraken完成までCSのみ意識。" },
+      "Draven":      { "score": -2, "tip": "オールインで負ける。Lv6まで安全に。サポ次第。Doran's Shield推奨。" },
+      "Aphelios":    { "score": -1, "tip": "Aphelios poke でレーン押される。Lv11+でスケール逆転。" },
+      "Ashe":        { "score":  0, "tip": "Ashe vs Jinx、Lv1-5 Ashe優位、Lv11以降逆転。" },
+      "Ezreal":      { "score":  0, "tip": "両者後半型。CS差で勝負。E妨害無いと押せない。" },
+      "Lucian":      { "score": -1, "tip": "Lv1-5圧倒される。CSのみ、Lv6以降は安全。" },
+      "Vayne":       { "score":  1, "tip": "レーンではJinx有利。Lv6前に差をつける。" },
+      "Tristana":    { "score":  0, "tip": "両hyper-carry。CS勝負。Tristana Lv6 W jumpに注意。" },
+      "Kalista":     { "score": -1, "tip": "Kalistaの全力に弱い。Lulu/Janna sup必須。" },
+      "Smolder":     { "score":  0, "tip": "両者スケール型。CS&安全プレイ。" }
+    },
+    "Kaisa": {
+      "Caitlyn":     { "score": -1, "tip": "Caitlyn射程に苦しむ。Eを温存し evolve優先。Lv6 R突進で関与。" },
+      "Draven":      { "score": -1, "tip": "Lv1-5 オールインに負ける。Lv6+でR突進peelからの逆襲。" },
+      "Ezreal":      { "score":  0, "tip": "両者scaling。Q poke勝負。" },
+      "Jinx":        { "score":  0, "tip": "両者後半型。レーンpushよりscale優先。" },
+      "Vayne":       { "score":  1, "tip": "Vayne lane弱い時期にE+Wでpoke。" },
+      "Lucian":      { "score": -1, "tip": "Lv1-5 Lucian優位。Lv6+ Rで peel可能。" }
+    },
+    "Kalista": {
+      "Caitlyn":     { "score":  0, "tip": "射程差はサポ次第。Lv1-2 全力でかわす。" },
+      "Draven":      { "score":  0, "tip": "両者lane dominant。アックス vs Eスタック の真っ向勝負。" },
+      "Jinx":        { "score":  1, "tip": "Lv1-5圧倒。Lv6+でJinxスケール前に決める。" },
+      "Vayne":       { "score":  2, "tip": "Vayne lane弱い時期。Eスタックで蹂躙。" },
+      "Senna":       { "score":  2, "tip": "Sennaのsoul stack前に殴り倒す。" },
+      "Ezreal":      { "score":  2, "tip": "Ezreal安全プレイをEスタックで突破。" }
+    },
+    "KogMaw": {
+      "Caitlyn":     { "score": -2, "tip": "Lv1-11は超劣勢。CSのみ。Guinsoo + Nashor's完成まで耐える。" },
+      "Draven":      { "score": -2, "tip": "Doran's Shield + サポ peel 必須。Lv11+でスケール勝ち。" },
+      "Vayne":       { "score":  0, "tip": "両hyper-carry。Lv11以降の真っ向勝負。" },
+      "Jinx":        { "score":  0, "tip": "両hyper-carry、CS差勝負。" }
     },
     "Lucian": {
-      "Caitlyn": { "score":  1, "tip": "Lv2先取で勝ち。Eで距離を詰めて2連オートで圧勝。" },
-      "Ezreal":  { "score":  1, "tip": "近距離でEから2連オート。Eを引き出してから攻め直す。" },
-      "Jinx":    { "score":  1, "tip": "Lv1-5圧勝。Lv6前に差をつけて中盤までに勝負を決める。" }
+      "Caitlyn":     { "score":  1, "tip": "Lv2先取で勝ち。Eで距離詰めて2連オートで圧勝。" },
+      "Draven":      { "score":  0, "tip": "両者lane dominant。Lv2先取とトレード勝負。" },
+      "Ezreal":      { "score":  1, "tip": "近距離でEから2連オート。Eを引き出してから攻め直す。" },
+      "Jhin":        { "score":  0, "tip": "Lv2 spike同士。WとEの相互。" },
+      "Jinx":        { "score":  1, "tip": "Lv1-5圧勝。Lv6前に差をつけて中盤までに勝負を決める。" },
+      "Aphelios":    { "score":  1, "tip": "Aphelios弱い武器の時に強引にtrade。" },
+      "Kaisa":       { "score":  1, "tip": "Lv1-5圧倒。Q+E weave連発でハラス。" },
+      "Vayne":       { "score":  2, "tip": "Vayne lane弱い時期に圧倒。" },
+      "Zeri":        { "score":  0, "tip": "両機動派。マナ管理勝負。" }
+    },
+    "MissFortune": {
+      "Caitlyn":     { "score": -1, "tip": "射程差で苦しい。Q-bounce poke で削るのみ。Lv6 R集団戦で価値。" },
+      "Draven":      { "score": -1, "tip": "Lv1-5 オールイン負け。Lv6 ultで反撃。" },
+      "Jinx":        { "score":  1, "tip": "Lv1-5 MF優位、CS差作る。" },
+      "Vayne":       { "score":  1, "tip": "Vayne lane弱い時期に Q-bounce hara。" },
+      "Ezreal":      { "score":  0, "tip": "互角。CSと poke精度。" }
+    },
+    "Nilah": {
+      "Caitlyn":     { "score": -2, "tip": "メレー射程で射撃ADCに苦しい。Eシールドでコンボ拒否、サポcc前提。" },
+      "Draven":      { "score": -1, "tip": "メレーレンジ不利。サポengageで強引に。" },
+      "Vayne":       { "score":  1, "tip": "Vayne+メレーNilahのclose-range battle。E shield優位。" },
+      "Jinx":        { "score":  0, "tip": "Jinxの低レーン強さvsNilah近距離耐性、サポcc勝負。" }
+    },
+    "Quinn": {
+      "Caitlyn":     { "score":  1, "tip": "E blindでlane勝ち。Lv6 R splitで戦線変える。" },
+      "Vayne":       { "score":  1, "tip": "EblindでVayneのQ+W使えなくする。" }
+    },
+    "Samira": {
+      "Caitlyn":     { "score": -1, "tip": "射程差で苦しい。サポengage必須、Sランクコンボで一発逆転。" },
+      "Draven":      { "score": -1, "tip": "オールインvオールイン、Drevenがやや有利。" },
+      "Ezreal":      { "score":  0, "tip": "Ez距離取り vs Samira突進、サポ次第。" },
+      "Vayne":       { "score":  1, "tip": "メレー同士、Samira combo > Vayne early。" }
+    },
+    "Senna": {
+      "Caitlyn":     { "score": -1, "tip": "Caitlyn lane圧力。soul farm優先で耐える。" },
+      "Draven":      { "score": -1, "tip": "Dravenオールインに弱い。Tahm Kench peel sup必須。" },
+      "Kalista":     { "score": -2, "tip": "Kalistaの全力に弱い。soul farmに集中。" }
+    },
+    "Sivir": {
+      "Caitlyn":     { "score": -1, "tip": "射程差。Wでwave clearで安全に。" },
+      "Draven":      { "score": -1, "tip": "Dravenオールインを spell shieldで吸って耐える。" },
+      "Lucian":      { "score": -1, "tip": "Lucian Lv2 spikeに弱い。spell shield温存重要。" },
+      "Ezreal":      { "score":  1, "tip": "Sivir wave clear で priorityで勝ち。" }
+    },
+    "Smolder": {
+      "Caitlyn":     { "score": -2, "tip": "Caitlyn lane圧力でstack稼げない。CSとQスタック優先で耐える。" },
+      "Draven":      { "score": -2, "tip": "Lv1-6 弱い、Doran's Shield + 安全プレイ。Lv11+で逆転。" },
+      "Jinx":        { "score":  0, "tip": "両scaling、stack vs reset勝負。" },
+      "Vayne":       { "score":  0, "tip": "両者スケール型。225スタック前に倒されないこと。" }
+    },
+    "Tristana": {
+      "Caitlyn":     { "score": -1, "tip": "Lv1-5射程差で苦しい。Lv6 W jumpで距離詰めて反撃。" },
+      "Draven":      { "score": -1, "tip": "オールインに弱い時期。Lv11+でスケール勝ち。" },
+      "Vayne":       { "score":  1, "tip": "両hyper-carry、Trist後半射程伸び有利。" },
+      "Jinx":        { "score":  0, "tip": "両hyper、CS勝負。" }
+    },
+    "Twitch": {
+      "Caitlyn":     { "score": -2, "tip": "射程差170で超劣勢。CSのみ、Lv6 R rangeでスケール待ち。" },
+      "Draven":      { "score": -2, "tip": "Doran's Shield + 安全プレイ。Lv6 R+ステルスで逆襲。" },
+      "Vayne":       { "score":  0, "tip": "両hyper、Twitch ステルスで先手。" },
+      "Lucian":      { "score": -2, "tip": "近距離ハラスで超不利。CSとXP受ける。" }
+    },
+    "Varus": {
+      "Caitlyn":     { "score":  0, "tip": "射程ほぼ同等。Q charge pokeでお互い削り合い。" },
+      "Draven":      { "score": -1, "tip": "Q charge中の硬直を狙われる。素早く撃つ。" },
+      "Jinx":        { "score":  1, "tip": "Q poke でJinxレーン圧迫。Lv6 R chain で peelからkill。" },
+      "Vayne":       { "score":  1, "tip": "Vayne近距離 vs Varus Q poke 有利。" }
+    },
+    "Vayne": {
+      "Caitlyn":     { "score": -2, "tip": "Lv1-11超劣勢。CSのみ、Doran's Shield、サポpeel重要。" },
+      "Draven":      { "score": -2, "tip": "オールインで死ぬ。Q tumble + サポcc で逃げのみ。" },
+      "Jhin":        { "score": -1, "tip": "Lv2 W rootに注意。Lv11+ scaleで逆転。" },
+      "Jinx":        { "score": -1, "tip": "Lv1-11劣勢、Lv16+で逆転。" },
+      "KogMaw":      { "score":  0, "tip": "両hyper-carry、CS勝負。" },
+      "Lucian":      { "score": -2, "tip": "Lv1-11 Lucianに圧倒。CS と XP に集中。" },
+      "Tristana":    { "score": -1, "tip": "Lv1-11 Tristana有利。後半Vayne true dmgで逆転。" }
+    },
+    "Xayah": {
+      "Caitlyn":     { "score":  0, "tip": "射程は不利だがR untargetableで pick耐性。Rakanとセットで真価。" },
+      "Draven":      { "score":  0, "tip": "Lv6 R untargetable で逃げ。" },
+      "Vayne":       { "score":  1, "tip": "羽根 root で Vayne メレーキック。" }
+    },
+    "Yunara": {
+      "Caitlyn":     { "score": -1, "tip": "射程差75で不利。新ADCなので相手プレイ要観察。" },
+      "Draven":      { "score": -1, "tip": "オールイン負け。サポcc + 安全プレイ。" },
+      "Jinx":        { "score":  0, "tip": "両者scaling想定。CS優先。" }
+    },
+    "Zeri": {
+      "Caitlyn":     { "score":  0, "tip": "Zeri機動性で距離詰める。E壁抜けで罠回避。" },
+      "Draven":      { "score":  0, "tip": "Zeri kiting で対抗。マナ管理重要。" },
+      "Vayne":       { "score":  1, "tip": "両近距離スキルマス、Zeri機動性勝ち。" },
+      "Lucian":      { "score":  0, "tip": "両機動派、マナ勝負。" }
     }
   }
 }

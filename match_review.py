@@ -245,8 +245,8 @@ def detect_points(stats: MatchStats, benchmark: dict) -> list[ImprovementPoint]:
                 category="matchup",
                 severity="major",
                 title=f"不利マッチアップ {stats.champion} vs {stats.enemy_adc} で過剰なデス",
-                detail=f"マッチアップ評価: {m['score']}",
-                suggestion=m.get("tip", "不利マッチでは安全プレイとスケーリング重視。"),
+                detail=f"マッチアップ評価: {m['score']} ({m.get('source', 'inferred')})",
+                suggestion=m.get("tip") or "不利マッチでは安全プレイとスケーリング重視。",
             ))
 
     return points

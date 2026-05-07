@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 import httpx
 
@@ -31,6 +32,23 @@ COACH_MODEL     = os.environ.get("COACH_MODEL", "qwen3:8b")
 COACH_TIMEOUT   = float(os.environ.get("COACH_TIMEOUT", "180"))
 
 
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
+# 閉じタグの無い思考ブロック（生成途中で切れた場合）も削除
+_THINK_OPEN  = re.compile(r"<think>.*", re.DOTALL)
+
+
+def _clean_response(text: str) -> str:
+    """qwen3 等が出力する <think>...</think> ブロックを除去"""
+    cleaned = _THINK_BLOCK.sub("", text)
+    cleaned = _THINK_OPEN.sub("", cleaned)
+    return cleaned.strip()
+
+
+def _disable_thinking(user_msg: str) -> str:
+    """qwen3 系の thinkingモード を無効化するため user 末尾に /no_think を追加"""
+    return f"{user_msg.rstrip()}\n\n/no_think"
+
+
 def coach_chat(
     system: str,
     user: str,
@@ -43,19 +61,25 @@ def coach_chat(
         "model": model,
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user",   "content": user},
+            {"role": "user",   "content": _disable_thinking(user)},
         ],
         "stream": False,
         "options": {
             "temperature": temperature,
-            "num_predict": 600,
+            "num_predict": 3000,
         },
     }
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(OLLAMA_CHAT_URL, json=payload)
         resp.raise_for_status()
         data = resp.json()
-    return (data.get("message") or {}).get("content", "").strip()
+    raw = (data.get("message") or {}).get("content", "")
+    cleaned = _clean_response(raw)
+    if not cleaned and raw.strip():
+        # think削除後に空 = thinkingで切れたケース。raw を返してデバッグ可能に
+        logger.warning("Coach response only contained <think> block, returning raw")
+        return raw.strip()
+    return cleaned
 
 
 def coach_chat_streaming(system: str, user: str, model: str = COACH_MODEL):

@@ -44,13 +44,46 @@ class ADCKnowledge:
     # マッチアップ
     # ------------------------------------------------------------------
 
+    _PHASE_RANK = {"weak": 0, "average": 1, "strong": 2, "dominant": 3}
+
+    def infer_matchup_score(self, my_champ: str, enemy_champ: str) -> Optional[int]:
+        """champion lane_phase 差からマッチアップスコアを推定（明示エントリ無い場合のフォールバック）。
+
+        範囲 -2(超不利) 〜 +2(超有利)。chamonp未登録なら None。
+        """
+        my = self.get_champion(my_champ)
+        en = self.get_champion(enemy_champ)
+        if not my or not en:
+            return None
+        my_rank = self._PHASE_RANK.get(my.get("lane_phase", "average"), 1)
+        en_rank = self._PHASE_RANK.get(en.get("lane_phase", "average"), 1)
+        diff = my_rank - en_rank
+        return max(-2, min(2, diff))
+
     def matchup(self, my_champ: str, enemy_champ: str) -> Optional[dict]:
-        """自分vs敵 のマッチアップ情報。未収録なら None"""
-        return (
+        """自分vs敵 のマッチアップ情報。
+
+        優先順:
+          1. matchups.json の明示エントリ → そのまま返す（tipあり、scoreあれば優先）
+          2. matchups.json の tip だけのエントリ → score を infer で補完
+          3. 明示エントリ無し → infer で score 生成（tip は None）
+          4. champion未登録 → None
+        """
+        explicit = (
             self._matchups.get("matchups", {})
             .get(my_champ, {})
             .get(enemy_champ)
         )
+        inferred = self.infer_matchup_score(my_champ, enemy_champ)
+        if explicit:
+            return {
+                "score": explicit.get("score", inferred if inferred is not None else 0),
+                "tip": explicit.get("tip"),
+                "source": "explicit",
+            }
+        if inferred is not None:
+            return {"score": inferred, "tip": None, "source": "inferred"}
+        return None
 
     def matchup_score(self, my_champ: str, enemy_champ: str) -> Optional[int]:
         m = self.matchup(my_champ, enemy_champ)
