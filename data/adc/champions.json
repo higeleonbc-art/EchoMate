@@ -1,0 +1,299 @@
+{
+  "_meta": {
+    "description": "ADC champion knowledge base. Used by adc_knowledge.py for matchup analysis and coaching prompts.",
+    "version": "0.2.0",
+    "last_updated": "2026-05-07",
+    "schema": {
+      "id":              "Riot championId (string)",
+      "name":            "Internal name (e.g. 'Caitlyn')",
+      "display":         "Display name in JP",
+      "range":           "Auto attack range",
+      "difficulty":      "1-10 mechanical difficulty",
+      "lane_phase":      "weak/average/strong/dominant",
+      "scaling":         "weak/average/strong/hyper",
+      "power_spikes":    "List of items/levels where champ becomes strong",
+      "weaknesses":      "Stages or matchups where champ is weak",
+      "playstyle":       "One-line summary",
+      "key_items":       "Recommended core items in order",
+      "best_supports":   "Supports that synergize well",
+      "tags":            "Quick filter tags"
+    }
+  },
+  "champions": {
+    "Aphelios": {
+      "id": "523", "name": "Aphelios", "display": "アフェリオス",
+      "range": 550, "difficulty": 9,
+      "lane_phase": "average", "scaling": "hyper",
+      "power_spikes": ["3-item (Collector + IE + LDR/Mortal)", "Level 11", "5item full build"],
+      "weaknesses": ["Very mechanically demanding (5武器ローテ)", "Mobility無し", "Severum以外のレーン弱い"],
+      "playstyle": "5武器を切り替えて状況対応するハイパーキャリー。武器順を覚えて使い分けるのが鍵。",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "The Collector", "Infinity Edge", "Lord Dominik's"],
+      "best_supports": ["Lulu", "Nami", "Janna"],
+      "tags": ["hyper-carry", "complex"]
+    },
+    "Ashe": {
+      "id": "22", "name": "Ashe", "display": "アッシュ",
+      "range": 600, "difficulty": 3,
+      "lane_phase": "average", "scaling": "average",
+      "power_spikes": ["Level 6 ult (engage)", "Kraken Slayer", "Runaan's Hurricane"],
+      "weaknesses": ["No dash", "Low burst damage", "Vulnerable to dive"],
+      "playstyle": "Utility ADC. Wスロウ + 全グローバルultでpick戦に貢献。crit safe pick.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Kraken Slayer", "Runaan's Hurricane", "Infinity Edge"],
+      "best_supports": ["Maokai", "Leona", "Braum"],
+      "tags": ["utility", "engage", "beginner-friendly"]
+    },
+    "Caitlyn": {
+      "id": "51", "name": "Caitlyn", "display": "ケイトリン",
+      "range": 650, "difficulty": 4,
+      "lane_phase": "dominant", "scaling": "average",
+      "power_spikes": ["Level 2 (Q+passive)", "Level 6", "The Collector", "Infinity Edge"],
+      "weaknesses": ["Mid-game falls off vs assassins", "Limited mobility", "Itemization依存"],
+      "playstyle": "長射程pokeとtrap-zoning. レーン圧倒して中盤までに勝負を決めるlane bully.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "The Collector", "Infinity Edge", "Lord Dominik's"],
+      "best_supports": ["Lux", "Morgana", "Leona"],
+      "tags": ["lane-bully", "long-range", "poke"]
+    },
+    "Corki": {
+      "id": "42", "name": "Corki", "display": "コーキ",
+      "range": 525, "difficulty": 6,
+      "lane_phase": "average", "scaling": "strong",
+      "power_spikes": ["Trinity Force", "Manamune", "Level 6 + Package"],
+      "weaknesses": ["Mana hungry early", "Skillshot R依存", "ランクメタ次第"],
+      "playstyle": "AD/AP混合ダメージのbruiser-marksman. Packageでマップ関与, Rで一定poke.",
+      "key_items": ["Tear of Goddess", "Berserker's Greaves", "Trinity Force", "Manamune", "Lord Dominik's"],
+      "best_supports": ["Karma", "Lulu", "Nami"],
+      "tags": ["mid-flex", "hybrid-damage"]
+    },
+    "Draven": {
+      "id": "119", "name": "Draven", "display": "ドレイヴン",
+      "range": 550, "difficulty": 8,
+      "lane_phase": "dominant", "scaling": "weak",
+      "power_spikes": ["Level 1-3 (即オールイン)", "First kill (passive gold)", "Bloodthirster"],
+      "weaknesses": ["Falls off late if behind", "Axe管理ミスで失速", "CC弱点"],
+      "playstyle": "アックスをキャッチしながら殴り続ける序盤特化。早期killで雪だるま化が目的。",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Bloodthirster", "Infinity Edge", "Lord Dominik's"],
+      "best_supports": ["Thresh", "Leona", "Pyke"],
+      "tags": ["lane-dominant", "snowball", "all-in"]
+    },
+    "Ezreal": {
+      "id": "81", "name": "Ezreal", "display": "エズリアル",
+      "range": 550, "difficulty": 7,
+      "lane_phase": "average", "scaling": "strong",
+      "power_spikes": ["Trinity Force", "Muramana fully stacked", "Level 6 ult"],
+      "weaknesses": ["Weak level 1-5 trades", "Mana hungry", "Skillshot reliant"],
+      "playstyle": "Eで距離取りながらQ poke. Manamune stackで後半scale. 安全プレイ得意.",
+      "key_items": ["Tear of Goddess", "Berserker's Greaves", "Trinity Force", "Manamune", "Lord Dominik's"],
+      "best_supports": ["Karma", "Yuumi", "Nami"],
+      "tags": ["safe", "poke", "scaling"]
+    },
+    "Jhin": {
+      "id": "202", "name": "Jhin", "display": "ジン",
+      "range": 550, "difficulty": 6,
+      "lane_phase": "strong", "scaling": "average",
+      "power_spikes": ["Level 2 (W root combo)", "Stormrazor + Galeforce", "Level 11"],
+      "weaknesses": ["No mobility outside W slow", "4-shot reload依存", "RootCC無いとAA当て難い"],
+      "playstyle": "4発限定の高火力ADC. クリティカル必中, ulトで最後の処刑とpick. Stormrazor + Galeforce.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Stormrazor", "The Collector", "Infinity Edge"],
+      "best_supports": ["Lux", "Senna", "Karma"],
+      "tags": ["burst", "long-range", "cc-reliant"]
+    },
+    "Jinx": {
+      "id": "222", "name": "Jinx", "display": "ジンクス",
+      "range": 525, "difficulty": 4,
+      "lane_phase": "weak", "scaling": "hyper",
+      "power_spikes": ["First Item (Kraken/Yun Tal)", "Level 11", "Resets in teamfight"],
+      "weaknesses": ["Vulnerable in lane", "No mobility - dies to dive"],
+      "playstyle": "Hyper-carry. レーン耐えてスケール, kill resetでスノーボール.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Kraken Slayer", "Rapid Firecannon", "Infinity Edge"],
+      "best_supports": ["Lulu", "Janna", "Thresh"],
+      "tags": ["hyper-carry", "scaling", "resets"]
+    },
+    "Kaisa": {
+      "id": "145", "name": "Kaisa", "display": "カイ＝サ",
+      "range": 525, "difficulty": 6,
+      "lane_phase": "average", "scaling": "strong",
+      "power_spikes": ["Q evolve (1st item completion)", "Level 6 ult", "3-item evolves"],
+      "weaknesses": ["Need to land E to scale", "Item-dependent evolves", "Short range"],
+      "playstyle": "Q-EvolveとR突進でハイブリッドキャリー. AD/AP両建てで状況対応.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Kraken Slayer / Manamune", "Nashor's (vs heavy AP)", "Berserker's"],
+      "best_supports": ["Rakan", "Nami", "Pyke"],
+      "tags": ["hybrid", "skirmisher", "self-peel"]
+    },
+    "Kalista": {
+      "id": "429", "name": "Kalista", "display": "カリスタ",
+      "range": 525, "difficulty": 7,
+      "lane_phase": "strong", "scaling": "weak",
+      "power_spikes": ["Level 1-2 (E stack)", "Blade of the Ruined King", "Level 6 + sup ult"],
+      "weaknesses": ["Falls off hard mid-late", "Sup synergy必須", "Crit not great"],
+      "playstyle": "Auto後ジャンプの超機動性. サポートultで大型イニシ. 序盤特化.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Blade of the Ruined King", "Runaan's Hurricane", "Wit's End"],
+      "best_supports": ["Thresh", "Taric", "Alistar"],
+      "tags": ["lane-dominant", "kiting", "early-game"]
+    },
+    "KogMaw": {
+      "id": "96", "name": "KogMaw", "display": "コグ＝マウ",
+      "range": 500, "difficulty": 4,
+      "lane_phase": "weak", "scaling": "hyper",
+      "power_spikes": ["First item (Guinsoo's Rageblade)", "Nashor's Tooth", "Berserker's"],
+      "weaknesses": ["No mobility", "Easy dive target", "Range短い基本値"],
+      "playstyle": "W発動時に超射程と%最大HPダメ. Nashor's + Guinsooで狂気的な攻撃速度.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Guinsoo's Rageblade", "Nashor's Tooth", "Wit's End"],
+      "best_supports": ["Lulu", "Janna", "Soraka"],
+      "tags": ["hyper-carry", "immobile", "peel-required"]
+    },
+    "Lucian": {
+      "id": "236", "name": "Lucian", "display": "ルシアン",
+      "range": 500, "difficulty": 6,
+      "lane_phase": "strong", "scaling": "weak",
+      "power_spikes": ["Level 2", "Essence Reaver", "With enchanter support"],
+      "weaknesses": ["Falls off late", "Short range", "Need to weave autos"],
+      "playstyle": "Passive double-shot活用のAggressive lane bully. Naimi/Karmaで超強化.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Essence Reaver", "Navori Quickblades", "Infinity Edge"],
+      "best_supports": ["Nami", "Karma", "Senna"],
+      "tags": ["lane-dominant", "weave", "early-mid"]
+    },
+    "MissFortune": {
+      "id": "21", "name": "MissFortune", "display": "ミス・フォーチュン",
+      "range": 550, "difficulty": 2,
+      "lane_phase": "strong", "scaling": "average",
+      "power_spikes": ["Level 6 (R teamfight)", "The Collector", "First Item"],
+      "weaknesses": ["No mobility / dash", "Easy to dive", "Ult chanellingは止められる"],
+      "playstyle": "Q bounceでレーンpoke, R集団戦. 初心者OK的な簡単操作.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "The Collector", "Infinity Edge", "Lord Dominik's"],
+      "best_supports": ["Leona", "Maokai", "Pyke"],
+      "tags": ["lane-pressure", "teamfight-ult", "beginner-friendly"]
+    },
+    "Nilah": {
+      "id": "895", "name": "Nilah", "display": "ニーラ",
+      "range": 225, "difficulty": 7,
+      "lane_phase": "average", "scaling": "strong",
+      "power_spikes": ["Level 6 ult", "Blade of Ruined King", "Wit's End"],
+      "weaknesses": ["Melee range", "No long-range tools", "Engage必須"],
+      "playstyle": "メレーADC. EシールドとR sustainで前線で殴り合う. サポと密接連携.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Blade of the Ruined King", "Wit's End", "Bloodthirster"],
+      "best_supports": ["Thresh", "Yuumi", "Lulu"],
+      "tags": ["melee", "skirmisher", "synergy-heavy"]
+    },
+    "Quinn": {
+      "id": "133", "name": "Quinn", "display": "クイン",
+      "range": 525, "difficulty": 4,
+      "lane_phase": "strong", "scaling": "weak",
+      "power_spikes": ["Level 6 (R rome)", "First Item", "Pickaxe以降"],
+      "weaknesses": ["Falls off in teamfights", "Lane stuck時に不利", "メタ依存"],
+      "playstyle": "Eブラインド + R高速ローム. ボトレーンよりトップ向き. ピック分散できるとき強い.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Kraken Slayer", "Black Cleaver", "Stormrazor"],
+      "best_supports": ["Pyke", "Senna", "Bard"],
+      "tags": ["roam", "split", "off-meta"]
+    },
+    "Samira": {
+      "id": "360", "name": "Samira", "display": "サミーラ",
+      "range": 500, "difficulty": 8,
+      "lane_phase": "strong", "scaling": "average",
+      "power_spikes": ["Level 6 (R combo)", "First Item (Collector)", "S-Rank stacks"],
+      "weaknesses": ["Need engage", "Mana管理", "Mid-rangeで弱い"],
+      "playstyle": "近距離の高機動コンボキャラ. Sランク連発でR発動 → 集団戦壊滅.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "The Collector", "Infinity Edge", "Lord Dominik's"],
+      "best_supports": ["Rakan", "Leona", "Pyke"],
+      "tags": ["all-in", "skirmisher", "engage-reliant"]
+    },
+    "Senna": {
+      "id": "235", "name": "Senna", "display": "セナ",
+      "range": 600, "difficulty": 5,
+      "lane_phase": "weak", "scaling": "hyper",
+      "power_spikes": ["Stack-based (souls)", "Umbral Glaive / Manamune", "Late game crit + range"],
+      "weaknesses": ["Low CS density (passive only)", "Mana issues", "Range伸びるまで遅い"],
+      "playstyle": "souls蓄積で射程と火力が伸び続ける. ADC運用ならsoul farm優先.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Umbral Glaive", "Lord Dominik's", "Infinity Edge"],
+      "best_supports": ["Tahm Kench", "Tank支援系"],
+      "tags": ["scaling", "soul-stacker", "long-range-late"]
+    },
+    "Sivir": {
+      "id": "15", "name": "Sivir", "display": "サイヴィア",
+      "range": 500, "difficulty": 4,
+      "lane_phase": "strong", "scaling": "average",
+      "power_spikes": ["Q (W bouncing waves)", "Essence Reaver", "Level 6 (R team mobility)"],
+      "weaknesses": ["No CC", "Reliant on E spell shield timing", "Range短め"],
+      "playstyle": "W bouncing autosでwave clear最強. R で集団戦のkite/engage支援.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Essence Reaver", "Infinity Edge", "Lord Dominik's"],
+      "best_supports": ["Yuumi", "Lulu", "Janna"],
+      "tags": ["wave-clear", "team-utility", "mobility"]
+    },
+    "Smolder": {
+      "id": "901", "name": "Smolder", "display": "スモルダー",
+      "range": 550, "difficulty": 5,
+      "lane_phase": "weak", "scaling": "hyper",
+      "power_spikes": ["Q stacks 25/125/225", "Rylai's / Trinity Force"],
+      "weaknesses": ["Stack回収まで弱い", "Skillshot依存", "比較的新ADC"],
+      "playstyle": "Qスタック蓄積型ADC. 225スタックでマップ広範囲ult. 後半スケールハイパーキャリー.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Trinity Force / Manamune", "Rylai's", "Liandry's"],
+      "best_supports": ["Lulu", "Janna", "Soraka"],
+      "tags": ["hyper-carry", "stacker", "scaling"]
+    },
+    "Tristana": {
+      "id": "18", "name": "Tristana", "display": "トリスターナ",
+      "range": 525, "difficulty": 4,
+      "lane_phase": "average", "scaling": "hyper",
+      "power_spikes": ["Level 1 (range +AS)", "Rapid Firecannon", "Late: range up to 661"],
+      "weaknesses": ["No CC", "Wが交戦リソース消費"],
+      "playstyle": "射程伸び+W mobility. 後半tower diveが強い. Late hyper carry.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Rapid Firecannon", "Runaan's Hurricane", "Infinity Edge"],
+      "best_supports": ["Lulu", "Yuumi", "Janna"],
+      "tags": ["hyper-carry", "late-game", "self-peel"]
+    },
+    "Twitch": {
+      "id": "29", "name": "Twitch", "display": "トゥイッチ",
+      "range": 480, "difficulty": 6,
+      "lane_phase": "weak", "scaling": "hyper",
+      "power_spikes": ["First Item (Kraken/RFC)", "Level 6 (R range)", "3-item full crit"],
+      "weaknesses": ["Lowest base range", "Easy to die in lane", "Snare/CC弱点"],
+      "playstyle": "ステルス潜伏 → R発動で全体貫通AA. レーン耐えてキャリー.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Kraken Slayer", "Runaan's Hurricane", "Infinity Edge"],
+      "best_supports": ["Lulu", "Yuumi", "Soraka"],
+      "tags": ["hyper-carry", "stealth", "scaling"]
+    },
+    "Varus": {
+      "id": "110", "name": "Varus", "display": "ヴァルス",
+      "range": 575, "difficulty": 4,
+      "lane_phase": "strong", "scaling": "average",
+      "power_spikes": ["Level 6 (R chain CC)", "Lethality build first power", "Crit late game"],
+      "weaknesses": ["No mobility", "Skillshot reliant", "Build分岐多い"],
+      "playstyle": "ロング射程poke. Lethality early or crit/onhit late. R チェーンCCで集団戦.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Eclipse / Kraken Slayer", "Serylda's / Runaan's", "Mortal Reminder"],
+      "best_supports": ["Rakan", "Karma", "Bard"],
+      "tags": ["poke", "long-range", "build-flex"]
+    },
+    "Vayne": {
+      "id": "67", "name": "Vayne", "display": "ヴェイン",
+      "range": 550, "difficulty": 8,
+      "lane_phase": "weak", "scaling": "hyper",
+      "power_spikes": ["Blade of Ruined King", "Phantom Dancer", "Level 11 / Level 16"],
+      "weaknesses": ["Vulnerable to poke", "Mana on Q", "Lane弱い"],
+      "playstyle": "近接ADCの最終形. 3stack true dmg + Q tumble + R stealth. 1v9キャリー.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Blade of the Ruined King", "Phantom Dancer", "Infinity Edge"],
+      "best_supports": ["Lulu", "Janna", "Tahm Kench"],
+      "tags": ["hyper-carry", "1v1", "true-damage"]
+    },
+    "Xayah": {
+      "id": "498", "name": "Xayah", "display": "ザヤ",
+      "range": 525, "difficulty": 5,
+      "lane_phase": "average", "scaling": "strong",
+      "power_spikes": ["Level 6 (R untargetable)", "Stormrazor", "3 feathers root"],
+      "weaknesses": ["Setup time for feathers", "No dash outside R", "Rakan前提のシナジー"],
+      "playstyle": "羽根を撒いてEで回収+root. Rで無敵時間あり集団戦に強い. Rakanと組むと最強.",
+      "key_items": ["Doran's Blade", "Berserker's Greaves", "Stormrazor", "Infinity Edge", "Lord Dominik's"],
+      "best_supports": ["Rakan", "Lulu", "Karma"],
+      "tags": ["self-peel", "synergy-rakan", "feathers"]
+    },
+    "Zeri": {
+      "id": "221", "name": "Zeri", "display": "ゼリ",
+      "range": 500, "difficulty": 7,
+      "lane_phase": "average", "scaling": "strong",
+      "power_spikes": ["First Item (Statikk Shiv)", "Level 6 ult", "On-hit Rylai's"],
+      "weaknesses": ["Mana hungry", "Need to weave kite", "Anti-mobility弱点"],
+      "playstyle": "移動射撃と壁抜けEで超機動. 接近して殴り続けるskirmisher ADC.",
+      "key_items": ["Tear of Goddess", "Berserker's Greaves", "Statikk Shiv", "Rapid Firecannon", "Wit's End"],
+      "best_supports": ["Lulu", "Yuumi", "Renata"],
+      "tags": ["skirmisher", "mobility", "kite"]
+    }
+  }
+}

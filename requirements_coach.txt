@@ -1,0 +1,11 @@
+# LoL ADC Coach - 依存パッケージ（最小構成）
+# インストール: pip install -r requirements_coach.txt
+
+# HTTP クライアント（Riot API / LCU / Live Client / Ollama）
+httpx>=0.27.0
+
+# 環境変数管理（RIOT_API_KEY 等）
+python-dotenv>=1.0.0
+
+# インゲームオーバーレイ・レビューHTMLは tkinter / webbrowser（標準ライブラリ）で実装するため
+# 追加依存なし。VOICEVOX は不採用。
