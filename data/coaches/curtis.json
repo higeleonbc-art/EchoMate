@@ -1,0 +1,123 @@
+{
+  "_meta": {
+    "coach_key": "curtis",
+    "coach_name": "Coach Curtis (Curtis Morgan)",
+    "channel": "Coach Curtis",
+    "source_videos": 7,
+    "generated_by": "Claude Opus 4.7 direct curation from transcripts (2026-05-08)"
+  },
+  "phrases": [
+    {
+      "quote": "Words are like information — but how you use them is the really important part.",
+      "topic": "vision philosophy"
+    },
+    {
+      "quote": "Never sit on two vision trinkets — you always want to have at least one ward down so you're actually utilizing your ward timer.",
+      "topic": "vision rule"
+    },
+    {
+      "quote": "Every ward should have at least some form of intention.",
+      "topic": "vision intention"
+    },
+    {
+      "quote": "Always have a pink on the map or at least one in your inventory.",
+      "topic": "control ward"
+    },
+    {
+      "quote": "Roaming — there is always, always, always an in-built sacrifice.",
+      "topic": "opportunity cost"
+    },
+    {
+      "quote": "Recall timings — there's always trade-offs. If you're not assessing what the trade-offs were, you're just scraping the surface.",
+      "topic": "recall analysis"
+    },
+    {
+      "quote": "Trading is the exchange of resources like health and mana with the aim of trying to gain some form of advantage.",
+      "topic": "trade definition"
+    },
+    {
+      "quote": "Champion identity dictates the trade-pattern you should be using.",
+      "topic": "champion identity"
+    },
+    {
+      "quote": "Reverse-engineer your trades from both champions' identities, strengths and weaknesses.",
+      "topic": "trade theory"
+    },
+    {
+      "quote": "Wave management is what dictates the conditions for everything else — trades, vision, objectives.",
+      "topic": "wave primacy"
+    },
+    {
+      "quote": "If you don't understand the trade-offs, you're not actually improving — you're just executing without context.",
+      "topic": "self-review"
+    },
+    {
+      "quote": "Tempo is created, not given.",
+      "topic": "tempo"
+    }
+  ],
+  "principles": [
+    {
+      "name": "Trade-offs フレームワーク",
+      "summary": "全ての行動（recall, roam, ward, trade）には必ず opportunity cost がある。何を得て、何を犠牲にしたか言語化できないアクションは『反射的プレイ』であり改善できない。"
+    },
+    {
+      "name": "Champion identity を起点にした trade設計",
+      "summary": "trade パターンは『short burst / extended / scaling』の3型に分かれ、自分と相手のチャンプの identity（poke型/all-in型/scaler型）で最適解が決まる。これを理解せず trade すると不利マッチで負け続ける。"
+    },
+    {
+      "name": "Vision = Information = Decision の連鎖",
+      "summary": "視界 → 情報 → 判断 の連鎖。視界を持たない判断はギャンブル、視界がない情報は誤情報、ward した位置に意図がなければ視界は活用できない。"
+    },
+    {
+      "name": "Wave manipulation がレーニングの土台",
+      "summary": "Push / Freeze / Slow Push を目的別に使い分ける能力が80%。trade能力やskillshot精度は残り20%。Wave 状態を自分の意図で作れない限り、安定して勝てない。"
+    },
+    {
+      "name": "Tempo creation の主導権",
+      "summary": "tempo は敵から奪うものではなく自分で生み出すもの。Wave をpush して prio を作り、空いた時間で vision/roam/objective setup に投資する積極的サイクル。"
+    },
+    {
+      "name": "Layered understanding（階層的理解）",
+      "summary": "メカニクス → champion identity → matchup → wave state → game state → win condition の順で理解を積み重ねる。下層を飛ばして上層だけ真似ても再現性ゼロ。"
+    },
+    {
+      "name": "Self-review with trade-off accounting",
+      "summary": "VOD review で各行動の『何のためにそれをしたか / 何を諦めたか』を毎回問う。これができないプレイヤーは何百試合やっても同じミスを繰り返す。"
+    }
+  ],
+  "tactics": [
+    {
+      "scenario": "ベース戻り直後の vision 配置",
+      "action": "control ward は必ず1個以上 inventoryに持つ。trinket は『片側に集中せず分散使用』してward timer の重複ダウンタイムを避ける。"
+    },
+    {
+      "scenario": "敵JGの位置が見えない序盤",
+      "action": "上ledge（敵JG入口）に1個だけ深ward。2 wardを同時に切ると後半空白が出るので、片方残してから切り替える。"
+    },
+    {
+      "scenario": "Recall するか迷ったとき",
+      "action": "(a) 次に欲しい item が買える gold あるか / (b) 次wave前に戻れるか / (c) tempo loss と gain の比較。3つ全て YES なら recall、1つでも NO なら『eat next wave』が正解。"
+    },
+    {
+      "scenario": "ロームを検討するとき",
+      "action": "犠牲にするもの（CS, plate damage, side prio, item timing）を列挙 → 得られるもの（kill assist, deeper vision, drag setup）と天秤に掛ける。曖昧なら roamしない。"
+    },
+    {
+      "scenario": "ドラ/ヘラ spawn の3分前",
+      "action": "wave を slow push に切り替えて自レーンを敵タワー圏に向けて整える → spawn時に side prio を持って objective に集合できる状態にする。"
+    },
+    {
+      "scenario": "champion identity に基づく trade判断",
+      "action": "自チャンプが scaler（Jinx/Kog/Vayne）なら extended laning を狙い、early aggressionは避ける。lane bully（Caitlyn/Draven/Lucian）なら逆に短期 burst trade を連発する。"
+    },
+    {
+      "scenario": "VOD review の手順",
+      "action": "ゲームを5分単位で区切り、各区間で『1つの主要な決定』を抽出 → trade-offを言語化（得たもの・失ったもの）→ next gameでの修正点を1つだけ決める。8つ同時はやらない。"
+    },
+    {
+      "scenario": "tempo を作りたいレーニング",
+      "action": "敵を tower 圏内に押し込み（push）→ 空いた時間で vision deepen / JG help / item shop。受け身の reactive play ではなくproactive な時間使い。"
+    }
+  ]
+}

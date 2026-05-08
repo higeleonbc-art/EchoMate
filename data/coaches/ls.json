@@ -1,0 +1,119 @@
+{
+  "_meta": {
+    "coach_key": "ls",
+    "coach_name": "LS (Nick De Cesare)",
+    "channel": "LS",
+    "source_videos": 20,
+    "generated_by": "Claude Opus 4.7 direct curation from transcripts (2026-05-08)"
+  },
+  "phrases": [
+    {
+      "quote": "Push the wave like Annie like as fast as humanly possible especially with the first blood kill.",
+      "topic": "lane phase"
+    },
+    {
+      "quote": "Always remember to push the wave as soon as it comes because the level 2 spike is really important.",
+      "topic": "level 2 spike"
+    },
+    {
+      "quote": "Level 2 comes after the first three melee minions of the second wave; whoever kills them first gets level 2.",
+      "topic": "level 2 mechanics"
+    },
+    {
+      "quote": "If you can't do it in one frame, then don't even bother.",
+      "topic": "trade execution"
+    },
+    {
+      "quote": "It's not overkill if it means you get an objective.",
+      "topic": "objective trade"
+    },
+    {
+      "quote": "If you're getting outpushed, that's not the enemy doing well — that's you not pushing.",
+      "topic": "lane priority"
+    },
+    {
+      "quote": "Always try to kill the small minions if you can, because they equal CS.",
+      "topic": "cs philosophy"
+    },
+    {
+      "quote": "Just simply time the opponent summoners — that's how you improve.",
+      "topic": "fundamentals"
+    },
+    {
+      "quote": "Cost-inefficient recall — there's nothing to be gained with that extra gold from that minion wave.",
+      "topic": "recall timing"
+    },
+    {
+      "quote": "View your traps as terrain altering — they're terraforming.",
+      "topic": "tool usage"
+    },
+    {
+      "quote": "If you have 4 or more minions, it's basically an extra spell.",
+      "topic": "wave as resource"
+    },
+    {
+      "quote": "Freeze with your advantage — it's like cutting off supply, putting them on an island.",
+      "topic": "freeze philosophy"
+    }
+  ],
+  "principles": [
+    {
+      "name": "Push priority over passive farming",
+      "summary": "ファースト・ブラッド後やレーン勝ちの場面では、CSをロスしてでも全力でpushして level 2/3 spikeを取り、敵をzoneする。受け身のfarmingは敵に主導権を渡す。"
+    },
+    {
+      "name": "Level 2 / Level 3 spikeを必ず先取",
+      "summary": "Lane phaseの優劣は最初の数分のレベル先取で決まる。Lv2 = 2nd wave melee 3体目、Lv3 = 3rd wave melee 3体目の瞬間。これを意識せず受動的にfarmするプレイヤーは矯正対象。"
+    },
+    {
+      "name": "Freeze は relegation tool（降格ツール）として使う",
+      "summary": "Freeze は単なる『敵を寄せない』ではなく『敵のCS/XP供給を断ち切る』戦略行為。優位がある時のみ機能し、不利時に試みると逆に酸欠になる。"
+    },
+    {
+      "name": "All-in は1フレームで完了すべき",
+      "summary": "全力の trade/all-in は迷いなく1動作で完結する。途中で『撤退すべきか』考えるなら最初から仕掛けるな。Drevenのアックス管理も同じ哲学。"
+    },
+    {
+      "name": "Recall は cost効率で評価せよ",
+      "summary": "次に買うアイテムが完成しないgold量で帰るのは『cost-inefficient recall』。1ウェーブ我慢して目標額まで貯めてから帰るのが正解。"
+    },
+    {
+      "name": "Support は kill を取るに値する役職",
+      "summary": "ADCがcarryでsupportはfeederではない。supportにkillを譲ってwards/potionsを増やしてもらう方が、ADC視点でもlane safetyが上がりlong-term gainが大きい。"
+    }
+  ],
+  "tactics": [
+    {
+      "scenario": "ファーストブラッドを取った直後",
+      "action": "全力でpush → tower plate を割る or zone enemyしてXP差を最大化。recallで戻るのは plate割った後。"
+    },
+    {
+      "scenario": "敵JGが bot 来そうな兆候 (top side missing)",
+      "action": "freezeに切り替えて敵ADCを tower 圏内から外せない位置で wave を止める。ガンクが来ても supply 切れで dive 不可になる。"
+    },
+    {
+      "scenario": "Caitlynで lane dominance がある時",
+      "action": "敵 minion wave の手前で trap を terrain として置き、敵 ADC の 移動 corridor を塞ぐ。 Lv2 で Q+passive で immediate kill window。"
+    },
+    {
+      "scenario": "Drevenで axe を維持しながらpoke",
+      "action": "axe drop位置を計算して mirror movement ではなく 'lead' する。axe 2本維持中は trade即勝。axe 0で trade禁止。"
+    },
+    {
+      "scenario": "Lv2 を取られそうな時の対応",
+      "action": "敵が Lv2 に先到達するなら、自分は wave を意図的に slow してdistance を取り、Lv2 trade を回避してLv3まで耐える。"
+    },
+    {
+      "scenario": "Recall するか迷う中盤",
+      "action": "次の到達 item が完成する gold か確認。1500g未満で帰るなら次wave eaten のほうが効率的なケースが多い。"
+    },
+    {
+      "scenario": "敵summoner spell timing 把握",
+      "action": "敵 ADC の Heal / Flash 使用時刻をメモし、CD 開け直前にall-in window を設定する。これだけで lane勝率が大きく変わる。"
+    },
+    {
+      "scenario": "lethal range 計算",
+      "action": "敵HP・自AAdamage・spell damage で kill threshold を頭で計算する。trade はinformed attempt、bro-pickではない。"
+    }
+  ]
+}
