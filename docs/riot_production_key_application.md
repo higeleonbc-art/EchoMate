@@ -42,15 +42,37 @@ Match data fetched from Riot APIs is stored only in local SQLite / JSON
 files on my own machine and is never transmitted, published, redistributed,
 or made publicly available.
 
-The project source code is open source on GitHub at
-https://github.com/{YOUR_GH_USER}/EchoMate (no API key is committed).
-Anyone who clones it must use their own personal Riot API key.
+The project source code is kept on a private repository (or open source
+on GitHub at https://github.com/{YOUR_GH_USER}/EchoMate). No API key is
+committed to source control; the .env file containing the API key is
+git-ignored.
 ```
+
+> **public/private どちらの場合でも**、上記 description は通用します。
+> public の場合は2文目を `The project source code is open source on
+> GitHub at https://github.com/{YOUR_GH_USER}/EchoMate (no API key is
+> committed; cloners must register their own key).` に置換すると
+> 透明性アピールが強くなります。
 
 ### URL / Game Data Information URL
 
+GitHub リポを **public** にしてもよい場合:
 ```
 https://github.com/{YOUR_GH_USER}/EchoMate
+```
+
+リポを **private** のままにしたい場合は以下のいずれか:
+
+**Option A: 空欄**（多くの個人ProjectでOK）
+
+**Option B: 「該当なし」と明示**
+```
+Not applicable - private personal project, source not publicly available.
+```
+
+**Option C: 自身のGitHubプロフィールページを書く**
+```
+https://github.com/{YOUR_GH_USER}
 ```
 
 ### Reasons for Requesting
@@ -130,7 +152,7 @@ RIOT_API_KEY=RGAPI-{new-production-key}
 ## 申請が通りやすくする tips
 
 - **真面目に "Personal Project" を選ぶ**（Game-changing Product を選ばない）
-- **GitHub リポを公開しておく**（透明性 +）
+- **GitHub リポを公開しておく**（透明性 +、ただし private でも審査通る）
 - **API key を絶対 commit しない**（承認後に取り消されるリスク）
 - **データ外部送信ゼロを明言**（Riot は user data の取り扱いに敏感）
 - **使用 endpoint を正直に列挙**（後から増やすと再申請になりうる）
