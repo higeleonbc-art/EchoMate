@@ -62,8 +62,9 @@ pip install -r requirements_coach.txt
 ### 2. Riot APIキー取得
 
 1. <https://developer.riotgames.com/> にRiotアカウントでログイン
-2. Personal API Key を発行（24時間有効）
-3. 本番運用には Production Key 申請が必要
+2. Personal API Key を発行（**24時間で失効**するので毎日再発行）
+3. 恒久運用には Production Key 申請を推奨。
+   申請テンプレは [docs/riot_production_key_application.md](docs/riot_production_key_application.md) 参照
 
 ### 3. 設定ファイル
 
