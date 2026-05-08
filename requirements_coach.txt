@@ -11,4 +11,7 @@ python-dotenv>=1.0.0
 # pywebview を導入してから coach_gui.py をメインエントリにする
 pywebview>=5.0
 
+# コーチング動画 transcript 取得（coach_corpus.py 用）
+youtube-transcript-api>=0.6.0
+
 # Live Overlay は tkinter（標準ライブラリ）で実装。VOICEVOXは不採用。

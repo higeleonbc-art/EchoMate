@@ -4,14 +4,97 @@ coach_prompts.py — ADCコーチ用プロンプトテンプレート (LS + Curt
 哲学: LS派ミクロ（CS・trade・positioning は non-negotiable）を前提にしつつ、
 Curtis派マクロ（wave management / tempo / objective / vision）を主鍛錬対象として
 コーチングする。詳細は memory/feedback_coaching_philosophy.md 参照。
+
+data/coaches/{ls,curtis}.json に要約コーパス（coach_corpus.py 生成）が
+存在する場合、system prompt 末尾に「影響を受けたコーチの実発言/原則」
+セクションを動的に追加し、忠実度を上げる。
 """
 
 from __future__ import annotations
 
+import json
+import logging
+from pathlib import Path
+
 from match_review import Review
 
+logger = logging.getLogger(__name__)
 
-COACH_SYSTEM_PROMPT = """\
+
+# ---------------------------------------------------------------------------
+# コーチコーパス読み込み (coach_corpus.py 生成物)
+# ---------------------------------------------------------------------------
+
+_CORPUS_DIR = Path(__file__).parent / "data" / "coaches"
+
+
+def _load_coach_corpus() -> dict:
+    """ls.json / curtis.json をロード。なければ空dict。"""
+    out: dict = {}
+    if not _CORPUS_DIR.exists():
+        return out
+    for name in ("ls", "curtis"):
+        path = _CORPUS_DIR / f"{name}.json"
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("phrases") or data.get("principles") or data.get("tactics"):
+                out[name] = data
+        except Exception as e:
+            logger.warning("Failed to load %s: %s", path, e)
+    return out
+
+
+def _format_corpus_section(corpus: dict) -> str:
+    """ロード済みコーパスを system prompt 用テキストに整形"""
+    if not corpus:
+        return ""
+    lines = ["", "## 影響を受けたコーチの実発言・原則（要約・参考用）",
+             "以下は実際のコーチ動画 transcript から抽出した要約。",
+             "そのまま引用するな。あなた自身の言葉で再表現すること。"]
+    for name, data in corpus.items():
+        meta = data.get("_meta", {})
+        coach_label = meta.get("coach_name", name.upper())
+        lines.append(f"\n### {coach_label}")
+
+        phrases = data.get("phrases") or []
+        if phrases:
+            lines.append("**典型的フレーズ:**")
+            for p in phrases[:6]:
+                quote = (p.get("quote") or "").strip()
+                if quote:
+                    lines.append(f'- "{quote}"')
+
+        principles = data.get("principles") or []
+        if principles:
+            lines.append("**指導原則:**")
+            for pr in principles[:4]:
+                pname = (pr.get("name") or "").strip()
+                psum = (pr.get("summary") or "").strip()
+                if pname:
+                    lines.append(f"- **{pname}**: {psum}")
+
+        tactics = data.get("tactics") or []
+        if tactics:
+            lines.append("**具体戦術:**")
+            for t in tactics[:5]:
+                sc = (t.get("scenario") or "").strip()
+                act = (t.get("action") or "").strip()
+                if sc:
+                    lines.append(f"- {sc} → {act}")
+    return "\n".join(lines)
+
+
+_COACH_CORPUS = _load_coach_corpus()
+_COACH_CORPUS_SECTION = _format_corpus_section(_COACH_CORPUS)
+
+
+# ---------------------------------------------------------------------------
+# System prompt 本体
+# ---------------------------------------------------------------------------
+
+_BASE_SYSTEM_PROMPT = """\
 あなたは LSとCoach Curtisの哲学を融合した League of Legends ADC専門コーチです。
 プレイヤーをマスター帯（上位0.5%）に到達させることが最終目標です。
 
@@ -54,6 +137,9 @@ COACH_SYSTEM_PROMPT = """\
 - LSやCurtisの名前を直接出すこと（影響を受けたコーチであり名乗りではない）
 - 思考過程やメタ説明を出力すること（最終回答のみ）
 """
+
+# 実発言コーパスを末尾に注入（あれば）
+COACH_SYSTEM_PROMPT = _BASE_SYSTEM_PROMPT + _COACH_CORPUS_SECTION
 
 
 def review_to_brief(review: Review) -> str:

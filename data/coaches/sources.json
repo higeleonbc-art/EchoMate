@@ -1,0 +1,39 @@
+{
+  "_meta": {
+    "description": "LS / Curtis のコーチング動画ID一覧。coach_corpus.py がここから transcript を取得して要約JSONを生成する。",
+    "instructions": [
+      "1. 各 coach の videos[].id を実際の YouTube動画ID に置換する（11文字の英数字）",
+      "2. 動画は『ADCコーチング上の重要発言が多い』ものを選ぶ（雑談やゲームプレイ垂れ流しは避ける）",
+      "3. 編集後 `python coach_corpus.py` を実行で transcript取得+要約が走る",
+      "4. プレースホルダー (PLACE_*) はスクリプトにより自動でスキップされる"
+    ],
+    "tips": [
+      "まずは1コーチあたり3〜5本から始めて、要約品質を見て増やす",
+      "topic フィールドはJSON要約時のヒントとして使われる"
+    ]
+  },
+  "ls": {
+    "name": "LS (Nick De Cesare)",
+    "channel": "LS",
+    "channel_url_hint": "https://www.youtube.com/results?search_query=LS+coaching+league",
+    "videos": [
+      { "id": "PLACE_LS_CS_MASTERY",     "topic": "CS Mastery / Last Hitting",       "_note": "LSのCS哲学・farm至上主義の動画" },
+      { "id": "PLACE_LS_TRADING_MATH",   "topic": "Trading Math",                    "_note": "「トレードは数学」HP/spell管理の話" },
+      { "id": "PLACE_LS_LANE_FUNDA",     "topic": "Lane Phase Fundamentals",         "_note": "レーニング基礎・positioning" },
+      { "id": "PLACE_LS_CLIMB",          "topic": "Climbing Advice",                 "_note": "ランクアップに必要な思考" },
+      { "id": "PLACE_LS_REVIEW",         "topic": "Player Review",                   "_note": "実プレイヤーのリプレイ解説" }
+    ]
+  },
+  "curtis": {
+    "name": "Coach Curtis (Curtis Morgan)",
+    "channel": "Coach Curtis",
+    "channel_url_hint": "https://www.youtube.com/results?search_query=Coach+Curtis+league",
+    "videos": [
+      { "id": "PLACE_CURTIS_WAVE_101",   "topic": "Wave Management 101",             "_note": "Push/Freeze/Slow Push の使い分け" },
+      { "id": "PLACE_CURTIS_TEMPO",      "topic": "Tempo Creation",                  "_note": "テンポは奪うのではなく作る" },
+      { "id": "PLACE_CURTIS_OBJECTIVE",  "topic": "Objective Setup",                 "_note": "ドラ/ヘラ前の準備" },
+      { "id": "PLACE_CURTIS_VISION",     "topic": "Vision Control",                  "_note": "視界=情報=判断" },
+      { "id": "PLACE_CURTIS_MACRO",      "topic": "Macro Decision Making",           "_note": "サイドレーン優先・マップ判断" }
+    ]
+  }
+}
