@@ -1,0 +1,134 @@
+{
+  "_meta": {
+    "coach_key": "tele",
+    "coach_name": "Tele (テル)",
+    "channel": "Tele / @tele1008",
+    "channel_url": "https://www.youtube.com/@tele1008",
+    "language": "ja",
+    "source_videos": 30,
+    "specialty": "Champion-specific mechanical execution / micro mastery",
+    "generated_by": "Claude Opus 4.7 direct curation from JA transcripts (2026-05-08)"
+  },
+  "phrases": [
+    {
+      "quote": "1番大事なのはスキルを確実に当てること。どんなに貯めても結局スキルが外れてしまっては元も子もない。",
+      "topic": "skill accuracy"
+    },
+    {
+      "quote": "貯めずに使っていい。当てる方が大事。",
+      "topic": "Q timing / spell efficiency"
+    },
+    {
+      "quote": "敵に使えるんだったら極力相手に使う。相手に使えなさそうだったらミニオンに使う。",
+      "topic": "spell usage priority"
+    },
+    {
+      "quote": "ベタチャンプは生存スキルが無いから、味方の構成にタンクが1体いるだけでもかなり立ち回りやすくなる。",
+      "topic": "champion frailty awareness"
+    },
+    {
+      "quote": "断速遅いウルトはCC入ってない限り基本当たらない。CCに合わせてウルトするか通常してからウルトするかのどっちか。",
+      "topic": "ult condition"
+    },
+    {
+      "quote": "集団戦中は必ず自分から味方の後ろに回り込んでポチン取るのが大事。",
+      "topic": "teamfight positioning"
+    },
+    {
+      "quote": "10分までに25スタック / 15分までに125スタック / 23分までに225スタックが合格ライン。",
+      "topic": "stacking benchmark (Smolder)"
+    },
+    {
+      "quote": "サポートのCCが入ってる間に確実に1番ダメージの出るスキルから当てていくっていう考え方でコンボするのが大事。",
+      "topic": "combo prioritization"
+    },
+    {
+      "quote": "アニメーションキャンセルでスキルとスキルの間に感覚が生まれないように影響時間を被せながら打つ。",
+      "topic": "animation cancel"
+    },
+    {
+      "quote": "サポートはこのチャンプの弱点を補ってくれる相性で選ぶ。",
+      "topic": "support synergy logic"
+    },
+    {
+      "quote": "敵のADCがサミラ/Trist/Lucianみたいなスキルダメージが全部物理ダメージのやつにはアーマーガーツが刺さる。",
+      "topic": "matchup-based item"
+    },
+    {
+      "quote": "ガンプッシュして1回タワジション仕込みたい。じゃないとずっとフリーズされる。",
+      "topic": "wave priority"
+    }
+  ],
+  "principles": [
+    {
+      "name": "チャンプ別 mechanical mastery を最優先",
+      "summary": "汎用ADC理論より先に、自分のメインチャンプのコンボ・パワースパイク・スキル数値を完璧に把握する。リワークが入らない限り知識は陳腐化しないので投資価値が高い。"
+    },
+    {
+      "name": "スキル accuracy > damage maximization",
+      "summary": "ダメージ最大化のために貯めて外すより、即座に使って確実に当てる方が常に正解。当てない火力は0。"
+    },
+    {
+      "name": "レベル毎にスキル使用パターンが変わる",
+      "summary": "Lv1のスキルとLv5のスキルは別物。Lv1はミニオン巻き込み、Lv2は通常→Q、Lv5でようやくマナに見合うダメージになる。レベルアップ毎に使い方を切り替える。"
+    },
+    {
+      "name": "アニメーションキャンセルでDPS最大化",
+      "summary": "AA→Q→AA→W→AA のように、各動作の硬直を次の動作で打ち消すことで短時間バーストを最大化。練習で身に付ける mechanical skill。"
+    },
+    {
+      "name": "コンボの順序は CC タイミングから逆算",
+      "summary": "サポのCC・自分のRのCC中に『最大ダメージスキルから当てる』。例: AA→R→AA→W→Q貯め→AA→E→AA。ダメ算より外さない順序が重要。"
+    },
+    {
+      "name": "サポート相性は弱点補完で考える",
+      "summary": "ベタ（生存スキル無し）チャンプ → タンク/エンチャンター。射程ある→Poke系orピック系。チャンプの弱みを補うサポを選ぶ。"
+    },
+    {
+      "name": "アイテムは敵構成で動的判断",
+      "summary": "敵ADCがピュア物理（Samira/Tristana/Lucian）→ アーマー系。敵JG/ミッドにADアサシン → ジャグナーノット。固定ビルドではなく毎試合判断する。"
+    },
+    {
+      "name": "スタック型チャンプは時間ベースで合格ライン管理",
+      "summary": "Smolder/Senna/Veigar 等のスタッカーは『〜分までに〜スタック』のbenchmarkを覚える。無理してスタック稼がず、ミニオンから効率よく稼ぐマインドが正解。"
+    }
+  ],
+  "tactics": [
+    {
+      "scenario": "Lv1 の最初のwave",
+      "action": "ベタチャンプ（Varus/Smolder等）はチャージスキルをミニオン巻き込みで撃つ。外しても push になるからスキルが無駄にならない。"
+    },
+    {
+      "scenario": "Lv2 取得直後のtrade window",
+      "action": "通常→Q の short trade。Lv1で温存したスキルでLv2 spike を最大化。マナがあるなら通常→Q→通常 の3hit burst。"
+    },
+    {
+      "scenario": "コアアイテム1個目完成後",
+      "action": "コンボ pattern が変化する（例: Varus は AA→Eだけで撃ち合えるようになる）。アイテム購入のたびに自分の damage threshold を再計算。"
+    },
+    {
+      "scenario": "サポのCCがヒットした瞬間",
+      "action": "CCの持続時間内に最大ダメスキルから順に当てる。例: AA→R→AA→W貯め→Q→AA→E→AA。途中でCCが切れる前に core damage を入れ終わる順序。"
+    },
+    {
+      "scenario": "集団戦の participation 時",
+      "action": "前に出ない。味方タンク/ブルーザーの背後から手前のターゲットを auto + spell で削る。R は CC ヒット後 or 通常攻撃中の安全 cast のみ。"
+    },
+    {
+      "scenario": "敵JG が gank しに来そう",
+      "action": "ガンプッシュしてタワジション仕込む or freeze に切替。Tower 圏内に押し込んで dive 不可にしてから JG retreat 待ち。"
+    },
+    {
+      "scenario": "スタック型チャンプ（Smolder等）でスタック遅れ",
+      "action": "無理にtrade スタック稼がずミニオン優先。Q は CD毎にミニオン or 敵に必ず使う（無駄CD作らない）。25/125/225 のbenchmark時刻と照合。"
+    },
+    {
+      "scenario": "敵構成にAD アサシン or 高物理 ADC",
+      "action": "First buy or 2nd buy で アーマー系（ジャグナーノット, Frozen Heart 系）を割り込ませる。物理重圧の試合でクリビルド固定はNG。"
+    },
+    {
+      "scenario": "ult を使うタイミング判断",
+      "action": "断速遅いult（Varus R, Ashe R 等）は CC 確定後 or 自分のAA中の安全 cast のみ。素出しは Flash 回避される前提でしか使わない。"
+    }
+  ]
+}

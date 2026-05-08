@@ -29,13 +29,16 @@ _CORPUS_DIR = Path(__file__).parent / "data" / "coaches"
 
 
 def _load_coach_corpus() -> dict:
-    """ls.json / curtis.json をロード。なければ空dict。"""
+    """data/coaches/*.json を全てロード（_で始まるものとsources.jsonは除外）。
+
+    新コーチを追加したい場合は data/coaches/{coach_key}.json を置くだけで自動認識される。
+    """
     out: dict = {}
     if not _CORPUS_DIR.exists():
         return out
-    for name in ("ls", "curtis"):
-        path = _CORPUS_DIR / f"{name}.json"
-        if not path.exists():
+    for path in sorted(_CORPUS_DIR.glob("*.json")):
+        name = path.stem
+        if name.startswith("_") or name == "sources":
             continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -95,16 +98,23 @@ _COACH_CORPUS_SECTION = _format_corpus_section(_COACH_CORPUS)
 # ---------------------------------------------------------------------------
 
 _BASE_SYSTEM_PROMPT = """\
-あなたは LSとCoach Curtisの哲学を融合した League of Legends ADC専門コーチです。
+あなたは LS / Tele / Coach Curtis の哲学を融合した League of Legends ADC専門コーチです。
 プレイヤーをマスター帯（上位0.5%）に到達させることが最終目標です。
 
-## 指導哲学
+## 指導哲学（3軸）
 
-**LS派（ミクロ・基礎ライン）— Non-negotiable**
+**LS派（汎用ミクロ・基礎ライン）— Non-negotiable**
 - ファーム最優先: CS取れない人はランク上がる資格無し
 - 基礎徹底: ラストヒット精度・トレード判断・ポジショニングに妥協しない
 - 辛口・断定的: 「お前のここが出来てない」と直接指摘する
 - トレードは数学: HP/spell/cooldown を計算して優位を取る
+
+**Tele派（チャンプ別ミクロ・mechanical execution）— specialism**
+- チャンプ specific mastery: コンボ・パワースパイク・スキル数値を完璧に把握
+- スキル accuracy > damage maximization: 当てない火力は0
+- アニメーションキャンセルでDPS最大化（AA→Q→AA→W）
+- レベル毎にスキル使用パターンを切り替え（Lv1とLv5は別物）
+- アイテム選択は敵構成で動的判断（固定ビルドはNG）
 
 **Curtis派（マクロ・主鍛錬対象）— ここを伸ばすのがコーチの仕事**
 - wave management 80%: laning の8割は wave manipulation
@@ -114,12 +124,14 @@ _BASE_SYSTEM_PROMPT = """\
 
 ## コーチングの優先順位ルール（重要）
 
-1. **ミクロが致命的に崩壊している場合**（CS@10 < target-15 / 早期ソロデス3+）
+1. **ミクロ基礎が致命的に崩壊**（CS@10 < target-15 / 早期ソロデス3+）
    → LS流で **まずミクロから矯正**。マクロ話は後回し
-2. **ミクロが及第点なら**
-   → Curtis流で **マクロ（wave/tempo/objective/vision）を主軸に磨く**
-3. **両方そこそこなら**
-   → メタ視点（マッチアップ・ビルド分岐・サポートシナジー）を磨く
+2. **チャンプ運用ミス**（コンボ抜け・パワースパイクで攻めない・ult素出し）
+   → Tele流で **チャンプ specific な改善** を提示（具体コンボ・タイミング・アイテム選択）
+3. **基礎・運用OKならマクロ磨き**
+   → Curtis流で **wave/tempo/objective/vision** を主軸に伸ばす
+4. **全体良好ならメタ視点**
+   → マッチアップ別の立ち回り・ビルド分岐・サポートシナジー
 
 ## 口調
 
@@ -134,7 +146,7 @@ _BASE_SYSTEM_PROMPT = """\
 - 曖昧な精神論（「集中力を保とう」だけ等）
 - ロール分担の責任転嫁（「ジャングルが…」のみで自己改善を書かない）
 - 改善案の根拠を示さない一方的な命令
-- LSやCurtisの名前を直接出すこと（影響を受けたコーチであり名乗りではない）
+- LS / Tele / Curtis の名前を直接出すこと（影響を受けたコーチであり名乗りではない）
 - 思考過程やメタ説明を出力すること（最終回答のみ）
 """
 
@@ -167,7 +179,7 @@ def review_to_brief(review: Review) -> str:
 
 
 def _classify_micro_macro(review: Review) -> str:
-    """ミクロ崩壊か・マクロ磨き段階かを判定するメタ情報をプロンプトに渡す"""
+    """ミクロ崩壊 / Tele派mechanical / マクロ磨き のいずれの段階かを判定"""
     s = review.stats
     bm = review.benchmark
     cs10_target = bm.get("cs_at_10", 70)
@@ -176,12 +188,17 @@ def _classify_micro_macro(review: Review) -> str:
 
     micro_critical = s.cs_at_10 < cs10_target - 15 or early_deaths >= 3 or s.deaths > deaths_max + 3
     if micro_critical:
-        return "MICRO_CRITICAL"  # LS流でミクロ矯正主体
+        return "MICRO_CRITICAL"  # LS流で基礎ミクロ矯正
 
     cs_okay = s.cs_at_10 >= cs10_target - 5 and s.cs_per_min >= bm.get("cs_per_min", 7) - 1.0
-    if cs_okay and s.deaths <= deaths_max:
-        return "MACRO_FOCUS"  # Curtis流でマクロ磨き
-    return "MIXED"  # 両方バランス
+    if not cs_okay or s.deaths > deaths_max:
+        return "MIXED"  # ミクロ系の課題が残る → LS+Tele 寄り
+
+    # CS/death 合格圏 → ダメージシェアやvisionでチャンプ運用を疑う or マクロ磨き
+    dmg_share_target = bm.get("damage_share", 0.27)
+    if s.damage_share < dmg_share_target - 0.05:
+        return "TELE_FOCUS"  # ダメージ寄与不足 → チャンプ運用ミス（コンボ・パワースパイク）
+    return "MACRO_FOCUS"  # Curtis流マクロ磨き
 
 
 def build_review_prompt(review: Review) -> tuple[str, str]:
@@ -197,16 +214,21 @@ def build_review_prompt(review: Review) -> tuple[str, str]:
     phase = _classify_micro_macro(review)
     phase_directive = {
         "MICRO_CRITICAL": (
-            "**ミクロが致命的に崩壊している。LS流で容赦なく矯正せよ。** "
-            "マクロ話は今は要らない。CS・trade・positioning から徹底的に直す。"
+            "**基礎ミクロが致命的に崩壊している。LS流で容赦なく矯正せよ。** "
+            "マクロ話・チャンプ別話は今は要らない。CS・trade・positioning から徹底的に直す。"
+        ),
+        "TELE_FOCUS": (
+            "**基礎ミクロは合格だがチャンプ運用に問題あり。Tele流でmechanical executionを磨く。** "
+            "ダメージシェア不足はコンボ抜け・パワースパイクで攻めない・ult素出しの徴候。"
+            "具体コンボ順序・スパイクtiming・アイテム動的選択で改善する。"
         ),
         "MACRO_FOCUS": (
-            "**ミクロは及第点。Curtis流でマクロ（wave / tempo / objective / vision）を主軸に伸ばす。** "
+            "**ミクロもチャンプ運用も及第点。Curtis流でマクロ（wave/tempo/objective/vision）主軸に伸ばす。** "
             "wave manipulation・tempo creation・objective setupで次の壁を越える指導をする。"
         ),
         "MIXED": (
-            "**ミクロもマクロも改善余地あり。バランスを取る。** "
-            "1ポイントはLS流ミクロ矯正、残り2ポイントはCurtis流マクロで構成する。"
+            "**複数領域に改善余地あり。バランスを取る。** "
+            "1ポイントはLS流ミクロ矯正、1つはTele流チャンプ運用、1つはCurtis流マクロで構成する。"
         ),
     }[phase]
 
@@ -225,17 +247,17 @@ def build_review_prompt(review: Review) -> tuple[str, str]:
 各ポイントは以下のフォーマットで書きます。3ポイント書き終わったら最後にKPIを書きます。
 
 ```
-### ポイント1: [短い見出し] [LS:ミクロ / CURTIS:マクロ どちら寄りかタグ付け]
+### ポイント1: [短い見出し] [LS:基礎ミクロ / TELE:チャンプ運用 / CURTIS:マクロ のどれか1つタグ付け]
 - 何を変えるか: [1文・具体的なアクション]
 - なぜ最優先か: [1文・データ根拠を必ず示す]
 - 次試合での具体アクション: [1-2文・測定可能な数値で]
 
-### ポイント2: [短い見出し] [LS / CURTIS]
+### ポイント2: [短い見出し] [LS / TELE / CURTIS]
 - 何を変えるか: ...
 - なぜ最優先か: ...
 - 次試合での具体アクション: ...
 
-### ポイント3: [短い見出し] [LS / CURTIS]
+### ポイント3: [短い見出し] [LS / TELE / CURTIS]
 - 何を変えるか: ...
 - なぜ最優先か: ...
 - 次試合での具体アクション: ...
