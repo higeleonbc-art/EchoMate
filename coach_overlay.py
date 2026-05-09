@@ -75,6 +75,8 @@ class CoachOverlay:
         self._queue: queue.Queue[tuple[str, str]] = queue.Queue()
         self._closed = False
         self._click_through = click_through
+        self._width = width
+        self._height = height
 
         self.root = tk.Tk()
         self.root.title("ADC Coach")
@@ -83,10 +85,12 @@ class CoachOverlay:
         self.root.attributes("-topmost", True)
         self.root.config(bg=BG_COLOR)
 
+        # 保存位置があれば優先、なければ画面右下にデフォルト配置
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
-        x = sw - width - OVERLAY_MARGIN_R
-        y = sh - height - OVERLAY_MARGIN_B
+        default_x = sw - width - OVERLAY_MARGIN_R
+        default_y = sh - height - OVERLAY_MARGIN_B
+        x, y = self._load_saved_position(default_x, default_y, sw, sh)
         self.root.geometry(f"{width}x{height}+{x}+{y}")
 
         # ヘッダ
@@ -116,8 +120,11 @@ class CoachOverlay:
         if draggable and not click_through:
             self._enable_drag()
 
-        # ESCで閉じる（click-through 中は効かないので注意）
-        self.root.bind_all("<Escape>", lambda _e: self.close())
+        # ESC: Draggable Mode なら位置保存して閉じる、click-through 中は効かない
+        if click_through:
+            self.root.bind_all("<Escape>", lambda _e: self.close())
+        else:
+            self.root.bind_all("<Escape>", lambda _e: self._save_position_and_close())
 
         # click-through 設定（mainloop 開始前にwindow handleが必要なので after で遅延適用）
         if click_through:
@@ -125,6 +132,42 @@ class CoachOverlay:
 
         # キューポーリング開始
         self.root.after(POLL_INTERVAL_MS, self._poll_queue)
+
+    # ------------------------------------------------------------------
+    # 位置の永続化 (Draggable Mode で動かしたら保存、次回起動時に再現)
+    # ------------------------------------------------------------------
+
+    def _load_saved_position(self, default_x: int, default_y: int,
+                               screen_w: int, screen_h: int) -> tuple[int, int]:
+        """coach_profile から overlay_position を読み出す。範囲外なら default 戻す。"""
+        try:
+            import coach_profile
+            saved = coach_profile.get("overlay_position")
+        except Exception:
+            return default_x, default_y
+        if not isinstance(saved, dict):
+            return default_x, default_y
+        try:
+            x = int(saved.get("x", default_x))
+            y = int(saved.get("y", default_y))
+        except (TypeError, ValueError):
+            return default_x, default_y
+        # 画面外を完全に外れていないか軽くチェック
+        if x < -self._width or x > screen_w or y < -self._height or y > screen_h:
+            return default_x, default_y
+        return x, y
+
+    def _save_position_and_close(self) -> None:
+        """現在位置を profile に保存してから close"""
+        try:
+            x = self.root.winfo_x()
+            y = self.root.winfo_y()
+            import coach_profile
+            coach_profile.update(overlay_position={"x": x, "y": y})
+            logger.info("Saved overlay position: (%d, %d)", x, y)
+        except Exception as e:
+            logger.warning("Failed to save overlay position: %s", e)
+        self.close()
 
     # ------------------------------------------------------------------
     # Click-through (Windows のみ)
