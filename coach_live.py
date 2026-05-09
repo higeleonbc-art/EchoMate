@@ -144,6 +144,7 @@ class LiveCoachLoop:
     def _run(self) -> None:
         client = LiveClient()
         in_game = False
+        last_game_mode: Optional[str] = None
         try:
             while not self._stop.is_set():
                 try:
@@ -159,6 +160,7 @@ class LiveCoachLoop:
 
                 if summary and stats:
                     in_game = True
+                    last_game_mode = stats.get("gameMode")
                     snap = Snapshot.from_live(summary, stats.get("gameTime", 0))
                     sev, header, body = evaluate(snap, self.cs_target)
                     self.overlay.update_text(body, header_text=header, severity=sev)
@@ -166,8 +168,22 @@ class LiveCoachLoop:
                 else:
                     if in_game:
                         # 試合終了を検知
+                        is_practice = last_game_mode in ("PRACTICETOOL", "TUTORIAL")
+                        if is_practice:
+                            body = (
+                                "プラクティスツール / チュートリアルは "
+                                "Riot APIに記録されないためレビュー対象外です。\n"
+                                "ESCで閉じて、ランク戦でお試しを。"
+                            )
+                        else:
+                            body = (
+                                "Coach Hub (GUI) を開いている場合は\n"
+                                "Latest Match タブが自動更新されます。\n"
+                                "（Riot API反映に2〜5分かかる場合あり）\n\n"
+                                "ESCで閉じて結果を確認してください。"
+                            )
                         self.overlay.update_text(
-                            "試合終了。レビューを生成中…",
+                            body,
                             header_text="MATCH ENDED",
                             severity="ok",
                         )

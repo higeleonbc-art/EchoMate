@@ -301,8 +301,13 @@ window.onLCUPhaseChange = function(phase) {
     switchTab("champ");
     loadChampSelect();
   } else if (phase === "EndOfGame") {
-    toast("Match ended. Reloading latest match…");
+    // Riot API に試合データが反映されるまで2-5分かかる
+    toast("試合終了検知。Riot API反映後に自動更新します", "info", 5000);
+    // 即時 + 1分後 + 3分後 + 5分後 でリロード試行
     loadMatchList();
+    setTimeout(() => { loadMatchList(); }, 60_000);
+    setTimeout(() => { loadMatchList(); toast("再取得中…"); }, 180_000);
+    setTimeout(() => { loadMatchList(); toast("再取得中…"); }, 300_000);
   }
 };
 window.onLiveOverlayLaunched = function() {
