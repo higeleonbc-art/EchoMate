@@ -117,6 +117,18 @@
     </div>
     <div class="content settings-form">
       <div class="field">
+        <label>Riot API Key
+          <span style="text-transform:none;font-weight:normal;color:var(--fg-muted);margin-left:8px">
+            Personal Keyは24時間で失効。Production Key申請推奨。
+          </span>
+        </label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="password" id="settingApiKey" placeholder="RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" style="flex:1">
+          <button class="btn primary" id="updateApiKey" type="button">Update</button>
+        </div>
+        <div id="apiKeyStatus" style="font-size:11px;color:var(--fg-muted);margin-top:4px"></div>
+      </div>
+      <div class="field">
         <label>Riot ID (Name#TAG)</label>
         <input type="text" id="settingRiotId" placeholder="Name#TAG">
       </div>

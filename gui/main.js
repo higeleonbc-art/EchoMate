@@ -24,6 +24,17 @@ function toast(message, kind = "info", durationMs = 3000) {
   toast._t = setTimeout(() => { el.className = "toast"; }, durationMs);
 }
 
+// API_KEY_EXPIRED 検出ヘルパ
+function isApiKeyExpired(errOrHtml) {
+  if (!errOrHtml) return false;
+  const s = String(errOrHtml);
+  return s.includes("API_KEY_EXPIRED");
+}
+function handleApiKeyExpired() {
+  toast("Riot APIキーが失効しています。Settings タブで Update してください", "error", 8000);
+  switchTab("settings");
+}
+
 // ======== Status ========
 function setStatus(text, kind = "grey") {
   document.getElementById("statusDot").className = "dot dot-" + kind;
@@ -35,6 +46,7 @@ async function loadMatchList() {
   setStatus("loading match list…", "yellow");
   try {
     const res = await pywebview.api.list_recent_matches(10);
+    if (isApiKeyExpired(res.error)) { handleApiKeyExpired(); setStatus("expired", "red"); return; }
     if (res.error) { toast(res.error, "error"); setStatus("error", "red"); return; }
     const sel = document.getElementById("matchPicker");
     sel.innerHTML = "";
@@ -59,6 +71,7 @@ async function loadLatestMatch(matchId = null) {
   setStatus("loading review…", "yellow");
   try {
     const html = await pywebview.api.render_match_review(matchId, /*useLLM=*/true);
+    if (isApiKeyExpired(html)) { handleApiKeyExpired(); setStatus("expired", "red"); return; }
     if (html.startsWith("ERROR:")) { toast(html, "error"); setStatus("error", "red"); return; }
     document.getElementById("latestFrame").srcdoc = html;
     setStatus("ready", "green");
@@ -78,6 +91,7 @@ async function loadTrend() {
   try {
     const count = parseInt(document.getElementById("trendCount").value, 10);
     const html = await pywebview.api.render_trend(count);
+    if (isApiKeyExpired(html)) { handleApiKeyExpired(); setStatus("expired", "red"); return; }
     if (html.startsWith("ERROR:")) { toast(html, "error"); setStatus("error", "red"); return; }
     document.getElementById("trendFrame").srcdoc = html;
     setStatus("ready", "green");
@@ -272,8 +286,36 @@ async function loadSettings() {
     document.getElementById("settingRiotId").value = s.riot_id || "";
     document.getElementById("settingPlatform").value = s.platform || "jp1";
     document.getElementById("settingRank").value = s.target_rank || "auto";
+    const status = document.getElementById("apiKeyStatus");
+    if (s.api_key_set) {
+      status.textContent = `現在のキー: ${s.api_key_masked}`;
+      status.style.color = "var(--fg-muted)";
+    } else {
+      status.textContent = "⚠ APIキー未設定。Update で設定してください";
+      status.style.color = "var(--warn)";
+    }
   } catch (e) { toast("Settings load failed: " + e, "error"); }
 }
+document.getElementById("updateApiKey").addEventListener("click", async () => {
+  const key = document.getElementById("settingApiKey").value.trim();
+  if (!key) { toast("APIキーを入力してください", "warn"); return; }
+  const btn = document.getElementById("updateApiKey");
+  btn.disabled = true; btn.textContent = "Updating…";
+  try {
+    const res = await pywebview.api.update_api_key(key);
+    if (!res.updated) {
+      toast("Update failed: " + (res.error || "unknown"), "error");
+    } else if (res.valid === false) {
+      toast("保存しましたが検証失敗: " + (res.warning || ""), "warn");
+    } else {
+      toast("APIキー更新成功・検証OK");
+      document.getElementById("settingApiKey").value = "";
+      await loadSettings();
+      await loadMatchList();  // 401で失敗していた可能性のあるパネルを再ロード
+    }
+  } catch (e) { toast("Update failed: " + e, "error"); }
+  finally { btn.disabled = false; btn.textContent = "Update"; }
+});
 document.getElementById("saveSettings").addEventListener("click", async () => {
   const data = {
     riot_id: document.getElementById("settingRiotId").value.trim(),

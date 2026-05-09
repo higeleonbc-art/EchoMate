@@ -116,16 +116,57 @@ class CoachAPI:
     # ============================================================
 
     def get_settings(self) -> dict:
+        # API key は最後の8文字だけ見せる（先頭隠す）
+        key = os.environ.get("RIOT_API_KEY", "")
+        masked = ""
+        if key:
+            masked = ("•" * max(0, len(key) - 8)) + key[-8:]
         return {
             "riot_id":     coach_profile.get_riot_id() or "",
             "platform":    coach_profile.get("platform") or os.environ.get("RIOT_PLATFORM", "jp1"),
             "target_rank": coach_profile.get("target_rank") or "auto",
+            "api_key_masked": masked,
+            "api_key_set":    bool(key),
         }
 
     def save_settings(self, data: dict) -> bool:
         coach_profile.update(**(data or {}))
         _reset_riot_client()
         return True
+
+    def update_api_key(self, new_key: str) -> dict:
+        """新しい Riot API Key を .env に書き込み、現プロセスにも即反映"""
+        new_key = (new_key or "").strip()
+        if not new_key:
+            return {"updated": False, "error": "empty"}
+        if not new_key.startswith("RGAPI-"):
+            return {"updated": False, "error": "format invalid (must start with RGAPI-)"}
+        try:
+            from dotenv import set_key
+            env_path = Path(__file__).parent / ".env"
+            # .env が無ければ作る
+            if not env_path.exists():
+                env_path.write_text("", encoding="utf-8")
+            set_key(str(env_path), "RIOT_API_KEY", new_key, quote_mode="never")
+        except Exception as e:
+            logger.warning("Failed to write .env: %s", e)
+            return {"updated": False, "error": str(e)}
+        # 現プロセスの環境変数も更新
+        os.environ["RIOT_API_KEY"] = new_key
+        # 既存クライアント破棄
+        _reset_riot_client()
+        # 軽くvalidationを試みる（最大10秒）
+        client = _get_riot_client()
+        if not client:
+            return {"updated": True, "valid": False, "warning": "client init failed"}
+        try:
+            riot_id = coach_profile.get_riot_id()
+            if riot_id and "#" in riot_id:
+                name, tag = riot_id.split("#", 1)
+                client.get_account_by_riot_id(name.strip(), tag.strip())
+            return {"updated": True, "valid": True}
+        except Exception as e:
+            return {"updated": True, "valid": False, "warning": f"validation: {e}"}
 
     # ============================================================
     # Latest Match
@@ -167,6 +208,8 @@ class CoachAPI:
                 })
             return {"matches": rows}
         except RiotAPIError as e:
+            if e.status_code == 401:
+                return {"error": "API_KEY_EXPIRED", "matches": []}
             return {"error": f"Riot API error: {e}", "matches": []}
         except Exception as e:
             logger.exception("list_recent_matches failed")
@@ -229,6 +272,8 @@ class CoachAPI:
             return render_review_html(review, comment, prev_kpi_results=kpi_results)
 
         except RiotAPIError as e:
+            if e.status_code == 401:
+                return "ERROR: API_KEY_EXPIRED"
             return f"ERROR: Riot API: {e}"
         except Exception as e:
             logger.exception("render_match_review failed")
@@ -268,6 +313,10 @@ class CoachAPI:
             bm = get_knowledge().benchmark(target_rank) or {}
             summary = MultiMatchSummary(matches=statlist, target_rank=target_rank, benchmark=bm)
             return render_summary_html(summary)
+        except RiotAPIError as e:
+            if e.status_code == 401:
+                return "ERROR: API_KEY_EXPIRED"
+            return f"ERROR: Riot API: {e}"
         except Exception as e:
             logger.exception("render_trend failed")
             return f"ERROR: {e}"
@@ -313,6 +362,10 @@ class CoachAPI:
                 "target_rank": target_rank,
                 "gap": gap,
             }
+        except RiotAPIError as e:
+            if e.status_code == 401:
+                return {"error": "API_KEY_EXPIRED"}
+            return {"error": f"Riot API: {e}"}
         except Exception as e:
             logger.exception("recompute_personal failed")
             return {"error": str(e)}
