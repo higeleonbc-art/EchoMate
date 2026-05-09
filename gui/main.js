@@ -293,6 +293,25 @@ document.getElementById("reloadAll").addEventListener("click", async () => {
   toast("Reloaded all panels");
 });
 
+// ======== Live Overlay 制御 ========
+async function startOverlay(draggable = false) {
+  try {
+    const res = await pywebview.api.start_live_overlay(null, draggable);
+    if (res.error) toast("Start failed: " + res.error, "error");
+    else if (res.already_running) toast("Live overlay は既に起動中", "warn");
+    else toast(`Live overlay started${draggable ? " (Draggable)" : ""}`);
+  } catch (e) { toast("Start failed: " + e, "error"); }
+}
+document.getElementById("startLiveOverlay").addEventListener("click", () => startOverlay(false));
+document.getElementById("startLiveDraggable").addEventListener("click", () => startOverlay(true));
+document.getElementById("stopLiveOverlay").addEventListener("click", async () => {
+  try {
+    const res = await pywebview.api.stop_live_overlay();
+    if (res.stopped) toast("Live overlay stopped");
+    else toast("Live overlay は起動していません", "warn");
+  } catch (e) { toast("Stop failed: " + e, "error"); }
+});
+
 // ======== LCU phase event hook (called from Python) ========
 window.onLCUPhaseChange = function(phase) {
   const conn = document.getElementById("lcuConn");

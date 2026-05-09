@@ -63,9 +63,18 @@ class CoachOverlay:
         height: int = OVERLAY_H,
         alpha: float = ALPHA,
         draggable: bool = True,
+        click_through: bool = False,
     ):
+        """
+        Args:
+            click_through: True で Win32 API による click-through 化
+                マウスイベントが背後の LoL に通り、ゲーム操作を妨害しない。
+                ただし ESC や drag は効かなくなるため、終了は外部 (GUI Stop ボタン
+                or プロセス kill) で行う必要がある。
+        """
         self._queue: queue.Queue[tuple[str, str]] = queue.Queue()
         self._closed = False
+        self._click_through = click_through
 
         self.root = tk.Tk()
         self.root.title("ADC Coach")
@@ -104,14 +113,46 @@ class CoachOverlay:
         )
         self.body.pack(fill="both", expand=True, padx=10, pady=(0, 8))
 
-        if draggable:
+        if draggable and not click_through:
             self._enable_drag()
 
-        # ESCで閉じる
+        # ESCで閉じる（click-through 中は効かないので注意）
         self.root.bind_all("<Escape>", lambda _e: self.close())
+
+        # click-through 設定（mainloop 開始前にwindow handleが必要なので after で遅延適用）
+        if click_through:
+            self.root.after(50, self._make_click_through)
 
         # キューポーリング開始
         self.root.after(POLL_INTERVAL_MS, self._poll_queue)
+
+    # ------------------------------------------------------------------
+    # Click-through (Windows のみ)
+    # ------------------------------------------------------------------
+
+    def _make_click_through(self) -> None:
+        """Win32 API でマウスイベントを背後の窗にスルーさせる"""
+        import sys
+        if not sys.platform.startswith("win"):
+            logger.info("Click-through: non-Windows platform, skipping")
+            return
+        try:
+            import ctypes
+            self.root.update_idletasks()
+            # tk frame の HWND → toplevel HWND に変換
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            GWL_EXSTYLE      = -20
+            WS_EX_TRANSPARENT = 0x00000020
+            WS_EX_LAYERED     = 0x00080000
+            WS_EX_TOOLWINDOW  = 0x00000080  # タスクバー非表示
+            cur = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            ctypes.windll.user32.SetWindowLongW(
+                hwnd, GWL_EXSTYLE,
+                cur | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
+            )
+            logger.info("Click-through enabled")
+        except Exception as e:
+            logger.warning("Click-through setup failed: %s", e)
 
     # ------------------------------------------------------------------
     # ドラッグ移動
@@ -192,7 +233,8 @@ def _demo() -> None:
     import threading
     import time
 
-    overlay = CoachOverlay()
+    # デモは draggable+ESC可能（click_through 無効）にしておく
+    overlay = CoachOverlay(click_through=False, draggable=True)
 
     def feed():
         samples = [

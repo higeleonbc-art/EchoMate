@@ -150,12 +150,30 @@
         <button class="btn primary" id="saveSettings">Save</button>
         <button class="btn" id="reloadAll">Reload all panels</button>
       </div>
+
+      <div class="settings-info">
+        <h3>Live Overlay 制御</h3>
+        <p style="font-size:13px;color:var(--fg-muted);margin-bottom:10px;">
+          Live Overlay はクリックスルー（ゲーム操作を妨害しない）で動作します。
+          位置調整するとき以外は GUI から起動・停止してください。
+        </p>
+        <div class="field-row">
+          <button class="btn" id="startLiveOverlay">Start Live Overlay</button>
+          <button class="btn danger" id="stopLiveOverlay">Stop Live Overlay</button>
+          <button class="btn" id="startLiveDraggable">Start (Draggable Mode)</button>
+        </div>
+        <p style="font-size:11px;color:var(--fg-muted);margin-top:8px;">
+          Draggable Mode: クリックスルーOFF・ドラッグで位置調整・ESCで終了可能。
+          位置を覚えたい時のみ使用。
+        </p>
+      </div>
+
       <div class="settings-info">
         <h3>Auto-detect features</h3>
         <ul>
           <li>LoL Client <strong>ChampSelect</strong> 検知 → Champ Selectタブ自動切替+tip表示</li>
-          <li>LoL Client <strong>InProgress</strong> 検知 → Live Overlay 自動起動</li>
-          <li>LoL Client <strong>EndOfGame</strong> 検知 → Latest Matchタブ自動更新</li>
+          <li>LoL Client <strong>InProgress</strong> 検知 → Live Overlay 自動起動 (クリックスルー)</li>
+          <li>LoL Client <strong>EndOfGame</strong> 検知 → Latest Matchタブ自動更新 (API反映後リトライ)</li>
         </ul>
       </div>
     </div>

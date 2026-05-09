@@ -419,25 +419,37 @@ class CoachAPI:
     # Live Overlay (別プロセス)
     # ============================================================
 
-    def start_live_overlay(self, rank: Optional[str] = None) -> dict:
+    def start_live_overlay(self, rank: Optional[str] = None,
+                            draggable: bool = False) -> dict:
+        """Live Overlay を別プロセスで起動。
+
+        Args:
+            rank: target rank。None なら設定から自動
+            draggable: True ならクリックスルー無効・ドラッグ移動/ESC可能
+                通常は False（クリックスルーON）でゲーム操作を妨害しない
+        """
         # 既に動いていれば何もしない
         if self._live_overlay_proc and self._live_overlay_proc.poll() is None:
-            return {"started": False, "reason": "already running"}
+            return {"started": False, "already_running": True}
 
         rank = rank or self._target_rank_or_default()
         py = sys.executable
         script = str(Path(__file__).parent / "coach_live.py")
+        cmd = [py, script, "--rank", rank]
+        if draggable:
+            cmd.append("--draggable")
         try:
             self._live_overlay_proc = subprocess.Popen(
-                [py, script, "--rank", rank],
+                cmd,
                 cwd=str(Path(__file__).parent),
                 # tkinter ウィンドウは独立プロセス
                 creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
             )
-            return {"started": True, "rank": rank, "pid": self._live_overlay_proc.pid}
+            return {"started": True, "rank": rank, "draggable": draggable,
+                    "pid": self._live_overlay_proc.pid}
         except Exception as e:
             logger.exception("Failed to launch live overlay")
-            return {"started": False, "reason": str(e)}
+            return {"started": False, "error": str(e)}
 
     def stop_live_overlay(self) -> dict:
         if self._live_overlay_proc and self._live_overlay_proc.poll() is None:

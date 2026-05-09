@@ -202,8 +202,14 @@ class LiveCoachLoop:
 # スタンドアロンエントリ
 # ---------------------------------------------------------------------------
 
-def run_live(rank: str = "GOLD") -> None:
-    overlay = CoachOverlay()
+def run_live(rank: str = "GOLD", click_through: bool = True) -> None:
+    """
+    Args:
+        click_through: True (既定) でマウスイベントをLoLにスルー。
+            終了は外部から (GUI の Stop Live Overlay ボタン or プロセス kill)
+            False ならドラッグ移動・ESC終了が可能 (位置調整・テスト用)
+    """
+    overlay = CoachOverlay(click_through=click_through, draggable=not click_through)
     loop = LiveCoachLoop(overlay, rank=rank)
     loop.start()
     try:
@@ -217,7 +223,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="LoL ADC live overlay")
     parser.add_argument("--rank", default="GOLD")
+    parser.add_argument("--draggable", action="store_true",
+                        help="クリックスルーを無効化し、ドラッグ移動・ESC終了を可能にする (位置調整時用)")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
-    run_live(args.rank)
+    run_live(args.rank, click_through=not args.draggable)
