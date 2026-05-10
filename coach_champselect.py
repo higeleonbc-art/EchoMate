@@ -70,41 +70,77 @@ def extract_lane_picks(
 ) -> Optional[dict]:
     """セッションから自分・敵ADC・自sup・敵sup の情報を抽出。
 
-    BOTTOM/UTILITY が確定していなければ None。
+    フォールバック経路（複数モード対応）:
+    1. championId / championPickIntent (resolved teamから直)
+    2. session.actions の picks (cellId → championId マップで補完)
+    3. position が無いモード(blind等) は cellId 並び順で推定（bot=3番目, sup=4番目）
     """
     my_cell_id = session.get("localPlayerCellId")
     my_team = session.get("myTeam", []) or []
     their_team = session.get("theirTeam", []) or []
 
+    # actions[][]からcompleted pickをcellId-indexedマップに集約
+    pick_by_cell: dict[int, int] = {}
+    for action_group in session.get("actions", []) or []:
+        for action in action_group or []:
+            if action.get("type") != "pick":
+                continue
+            cid = action.get("championId") or 0
+            cell = action.get("actorCellId")
+            if cell is None or not cid:
+                continue
+            # completed=Trueを優先するが、未完でも値があれば暫定として保持
+            if action.get("completed") or cell not in pick_by_cell:
+                pick_by_cell[cell] = int(cid)
+
+    def champion_id(p: Optional[dict]) -> int:
+        if not p:
+            return 0
+        cid = p.get("championId") or 0
+        if not cid:
+            cid = pick_by_cell.get(p.get("cellId"), 0)
+        if not cid:
+            cid = p.get("championPickIntent") or 0
+        try:
+            return int(cid)
+        except (TypeError, ValueError):
+            return 0
+
     me = next((p for p in my_team if p.get("cellId") == my_cell_id), None)
     if not me:
         return None
 
-    def find(team: list, position: str) -> Optional[dict]:
+    def by_position(team: list, position: str) -> Optional[dict]:
         return next(
             (p for p in team
              if (p.get("assignedPosition") or "").lower() == position),
             None,
         )
 
-    my_adc = find(my_team, "bottom") or me  # 自分が ADC でない可能性もある
-    my_sup = find(my_team, "utility")
-    en_adc = find(their_team, "bottom")
-    en_sup = find(their_team, "utility")
+    def by_cell_order(team: list, offset: int) -> Optional[dict]:
+        """assignedPosition が無いblindモード等で cellId 並び順から推定。
+        通常 bot=offset 3, support=offset 4 (TOP/JG/MID/BOT/SUP)"""
+        if len(team) <= offset:
+            return None
+        return sorted(team, key=lambda p: p.get("cellId", 0))[offset]
+
+    my_adc = by_position(my_team, "bottom") or by_cell_order(my_team, 3) or me
+    my_sup = by_position(my_team, "utility") or by_cell_order(my_team, 4)
+    en_adc = by_position(their_team, "bottom") or by_cell_order(their_team, 3)
+    en_sup = by_position(their_team, "utility") or by_cell_order(their_team, 4)
 
     def cname(p: Optional[dict]) -> Optional[str]:
-        if not p:
-            return None
-        cid = p.get("championId") or p.get("championPickIntent") or 0
-        return cmap.name(int(cid)) if cid else None
+        cid = champion_id(p)
+        return cmap.name(cid) if cid else None
 
+    me_cell = me.get("cellId")
     return {
-        "i_am_adc":     (me is my_adc),
-        "my_champ":     cname(me),
-        "my_adc":       cname(my_adc),
-        "my_sup":       cname(my_sup),
-        "enemy_adc":    cname(en_adc),
-        "enemy_sup":    cname(en_sup),
+        "i_am_adc":  (me_cell == (my_adc or {}).get("cellId")),
+        "my_champ":  cname(me),
+        "my_adc":    cname(my_adc),
+        "my_sup":    cname(my_sup),
+        "enemy_adc": cname(en_adc),
+        "enemy_sup": cname(en_sup),
     }
 
 
