@@ -25,11 +25,28 @@ class ADCKnowledge:
         self._matchups = self._load("matchups.json")
         self._benchmarks = self._load("benchmarks.json")
         self._coach_matchups = self._load_coach_matchups()
+        self._item_recs = self._load_optional("item_recommendations.json")
 
     def _load(self, filename: str) -> dict:
         path = self.data_dir / filename
         with path.open(encoding="utf-8") as f:
             return json.load(f)
+
+    def _load_optional(self, filename: str) -> dict:
+        """無くてもエラーにしない緩いロード"""
+        path = self.data_dir / filename
+        if not path.exists():
+            return {}
+        try:
+            with path.open(encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning("Failed to load %s: %s", filename, e)
+            return {}
+
+    def get_item_rec(self, champ_name: str) -> Optional[dict]:
+        """指定 ADC のアイテム推奨を返す"""
+        return self._item_recs.get("items", {}).get(champ_name)
 
     def _load_coach_matchups(self) -> dict:
         """data/coaches/matchups_*.json をロード"""

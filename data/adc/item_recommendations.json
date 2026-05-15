@@ -1,0 +1,278 @@
+{
+  "_meta": {
+    "description": "ADC 26体のコアアイテム推奨。標準ビルド + 敵構成別の代替アイテム。LLMがアイテム判断する際の ground truth として使う。",
+    "version": "0.1.0",
+    "last_updated": "2026-05-09",
+    "patch": "16.x想定",
+    "philosophy": "1コアは Mythic / 強Spike アイテム。2-3コアで敵構成 (armor/AP/assassin/tank) に応じて動的選択。",
+    "key_categories": {
+      "vs_armor_heavy": "敵タンク・ブルーザーが多い時 (Maokai/Trundle/Mundo/Sion等) → 防具貫通",
+      "vs_ap_heavy": "敵にAPが3人以上 (Brand/Syndra/Vex等) → 魔法防御 or QSS系",
+      "vs_assassin": "敵にassassin/burst (Zed/Rengar/Talon/Diana等) → spell shield/GA",
+      "vs_engage_heavy": "敵にengage多数 (Malphite/Leona/Maokai/Amumu等) → mobility/peel",
+      "vs_kite_heavy": "敵に高機動 (Yasuo/Yone/Akali等) → 自衛"
+    }
+  },
+  "items": {
+    "Aphelios": {
+      "standard":          ["The Collector", "Infinity Edge", "Lord Dominik's Regards"],
+      "alt_first_options": ["Essence Reaver", "Stormrazor", "Statikk Shiv"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards", "Mortal Reminder"],
+      "vs_ap_heavy":       ["Mercurial Scimitar"],
+      "vs_assassin":       ["Edge of Night", "Guardian Angel"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "5武器ローテのため Crit + AS 系がベース。Severum 維持で sustain。"
+    },
+    "Ashe": {
+      "standard":          ["Kraken Slayer", "Runaan's Hurricane", "Infinity Edge"],
+      "alt_first_options": ["Statikk Shiv", "Stormrazor"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Mercurial Scimitar"],
+      "vs_assassin":       ["Guardian Angel"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "Wスロウ + AS crit でutility ADC。Runaan's を早めに完成して siege/teamfight 強化。"
+    },
+    "Caitlyn": {
+      "standard":          ["The Collector", "Infinity Edge", "Rapid Firecannon"],
+      "alt_first_options": ["Stormrazor", "Statikk Shiv", "Yun Tal Wildarrows"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Mercurial Scimitar"],
+      "vs_assassin":       ["Edge of Night", "Guardian Angel"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "Crit + lethality 混合。1コア The Collector で snowball。RFCで 750 range pokeを最大化。"
+    },
+    "Corki": {
+      "standard":          ["Trinity Force", "Manamune (Muramana)", "Lord Dominik's Regards"],
+      "alt_first_options": ["Eclipse"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards", "Mortal Reminder"],
+      "vs_ap_heavy":       ["Mercurial Scimitar", "Maw of Malmortius"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     [],
+      "notes": "Trinity + Manamuneでhybrid damage。AD/AP混合 burst。"
+    },
+    "Draven": {
+      "standard":          ["The Collector", "Bloodthirster", "Infinity Edge"],
+      "alt_first_options": ["Yun Tal Wildarrows", "Essence Reaver"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Maw of Malmortius"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "Early game snowball型。Collector で execution + Bloodthirster で sustain。"
+    },
+    "Ezreal": {
+      "standard":          ["Manamune (Muramana)", "Trinity Force", "Lord Dominik's Regards"],
+      "alt_first_options": ["Essence Reaver", "Iceborn Gauntlet"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards", "Mortal Reminder"],
+      "vs_ap_heavy":       ["Maw of Malmortius", "Mercurial Scimitar"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     [],
+      "notes": "Manamune stack優先で scale。E mobility あるので safety ADC。Trinityで poke + on-hit。"
+    },
+    "Jhin": {
+      "standard":          ["The Collector", "Stormrazor", "Infinity Edge"],
+      "alt_first_options": ["Yun Tal Wildarrows"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Mercurial Scimitar"],
+      "vs_assassin":       ["Edge of Night", "Guardian Angel"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "4発の burst型。Crit + Lethality でラスト弾の damage 最大化。"
+    },
+    "Jinx": {
+      "standard":          ["Kraken Slayer", "Runaan's Hurricane", "Infinity Edge"],
+      "alt_first_options": ["Statikk Shiv", "Yun Tal Wildarrows"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Mercurial Scimitar"],
+      "vs_assassin":       ["Guardian Angel"],
+      "vs_engage_heavy":   ["Bloodthirster"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "Hyper carry。Lv11以降 Rocket形態 + Runaan's で teamfight 圧倒。"
+    },
+    "Kaisa": {
+      "standard":          ["Kraken Slayer", "Berserker's Greaves", "Statikk Shiv"],
+      "alt_first_options": ["Manamune (Muramana)", "Galeforce"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Nashor's Tooth (AP build)", "Mercurial Scimitar"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "AD/AP両方の hybrid。Q evolve で hyper carry。敵構成で AD/AP切替判断。"
+    },
+    "Kalista": {
+      "standard":          ["Blade of the Ruined King", "Runaan's Hurricane", "Wit's End"],
+      "alt_first_options": ["Kraken Slayer"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Wit's End", "Mercurial Scimitar"],
+      "vs_assassin":       ["Guardian Angel"],
+      "vs_engage_heavy":   [],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "Early game snowball + on-hit。BotRK で tank shredding。"
+    },
+    "KogMaw": {
+      "standard":          ["Guinsoo's Rageblade", "Nashor's Tooth", "Wit's End"],
+      "alt_first_options": ["Blade of the Ruined King"],
+      "vs_armor_heavy":    ["Wit's End", "Bloodthirster"],
+      "vs_ap_heavy":       ["Wit's End"],
+      "vs_assassin":       ["Guardian Angel"],
+      "vs_engage_heavy":   [],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "On-hit hyper carry。Nashor's + Guinsoo で AS-AP-on-hit triple scaling。"
+    },
+    "Lucian": {
+      "standard":          ["Essence Reaver", "Navori Quickblades", "Infinity Edge"],
+      "alt_first_options": ["Trinity Force", "Eclipse"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Maw of Malmortius", "Mercurial Scimitar"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "Early-mid power。Essence Reaver で mana sustain → Navori で Q連発。"
+    },
+    "MissFortune": {
+      "standard":          ["The Collector", "Infinity Edge", "Lord Dominik's Regards"],
+      "alt_first_options": ["Stormrazor", "Eclipse"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards", "Mortal Reminder"],
+      "vs_ap_heavy":       ["Mercurial Scimitar"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     [],
+      "notes": "Lethality build。R集団戦で価値。Collector で execution。"
+    },
+    "Nilah": {
+      "standard":          ["Blade of the Ruined King", "Bloodthirster", "Wit's End"],
+      "alt_first_options": ["Kraken Slayer"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Wit's End", "Maw of Malmortius"],
+      "vs_assassin":       ["Guardian Angel"],
+      "vs_engage_heavy":   ["Guardian Angel"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "メレー ADC。BotRK + Bloodthirster で sustain ファイター型。"
+    },
+    "Quinn": {
+      "standard":          ["Kraken Slayer", "Berserker's Greaves", "Stormrazor"],
+      "alt_first_options": ["The Collector"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Mercurial Scimitar"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "Split push + roam型。Lv6 R で他レーン関与。"
+    },
+    "Samira": {
+      "standard":          ["The Collector", "Infinity Edge", "Bloodthirster"],
+      "alt_first_options": ["Eclipse"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Maw of Malmortius"],
+      "vs_assassin":       ["Edge of Night", "Guardian Angel"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "All-in combo型。Sランク連発で R 発動。Crit + lethality 混合。"
+    },
+    "Senna": {
+      "standard":          ["Umbral Glaive", "Black Cleaver", "Lord Dominik's Regards"],
+      "alt_first_options": ["Manamune (Muramana)", "Eclipse"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Mercurial Scimitar"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     [],
+      "notes": "Soul stack で scale。ADC運用 or support運用で build 違う。ADCは crit でも可。"
+    },
+    "Sivir": {
+      "standard":          ["Essence Reaver", "Navori Quickblades", "Infinity Edge"],
+      "alt_first_options": ["Trinity Force", "Kraken Slayer"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Mercurial Scimitar"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "Q + W bouncing で wave clear強。Navori で Q連発。R は team mobility。"
+    },
+    "Smolder": {
+      "standard":          ["Rylai's Crystal Scepter", "Liandry's Anguish", "Riftmaker"],
+      "alt_first_options": ["Manamune (Muramana)", "Trinity Force"],
+      "vs_armor_heavy":    ["Liandry's Anguish"],
+      "vs_ap_heavy":       ["Maw of Malmortius"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     [],
+      "notes": "Stack型 hyper carry。Rylai's + Liandry's で sustained mage 風build。"
+    },
+    "Tristana": {
+      "standard":          ["Kraken Slayer", "Rapid Firecannon", "Runaan's Hurricane"],
+      "alt_first_options": ["Statikk Shiv", "Galeforce"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Mercurial Scimitar"],
+      "vs_assassin":       ["Guardian Angel"],
+      "vs_engage_heavy":   ["Guardian Angel"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "Late game hyper。W jumpで self-peel。RFC で range up 最大化。"
+    },
+    "Twitch": {
+      "standard":          ["Kraken Slayer", "Runaan's Hurricane", "Infinity Edge"],
+      "alt_first_options": ["Statikk Shiv"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Mercurial Scimitar"],
+      "vs_assassin":       ["Guardian Angel"],
+      "vs_engage_heavy":   ["Bloodthirster"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "Stealth hyper carry。Runaan's で R全体貫通 AA 最大化。"
+    },
+    "Varus": {
+      "standard":          ["Kraken Slayer", "Runaan's Hurricane", "Wit's End"],
+      "alt_first_options": ["Eclipse (lethality)", "Manamune"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards", "Mortal Reminder"],
+      "vs_ap_heavy":       ["Wit's End", "Mercurial Scimitar"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "On-hit / crit / lethality の3ビルド可能。長射程 poke + R cc。"
+    },
+    "Vayne": {
+      "standard":          ["Blade of the Ruined King", "Berserker's Greaves", "Phantom Dancer"],
+      "alt_first_options": ["Kraken Slayer"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards (after BotRK)"],
+      "vs_ap_heavy":       ["Wit's End", "Mercurial Scimitar"],
+      "vs_assassin":       ["Guardian Angel"],
+      "vs_engage_heavy":   ["Guardian Angel"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "True damage hyper carry。BotRK + PD で1v1 monster。Lv16 で peak。"
+    },
+    "Xayah": {
+      "standard":          ["The Collector", "Infinity Edge", "Lord Dominik's Regards"],
+      "alt_first_options": ["Stormrazor"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Mercurial Scimitar"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     ["Phantom Dancer"],
+      "notes": "Crit ADC + R untargetable で teamfight 安全。Rakan セットで真価。"
+    },
+    "Yunara": {
+      "standard":          ["要調査 (新ADC)"],
+      "alt_first_options": [],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Mercurial Scimitar"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     [],
+      "notes": "Patch 16.x で追加された新ADC。標準ビルドは patch によるメタ次第。Crit ADC ベース想定。"
+    },
+    "Zeri": {
+      "standard":          ["Statikk Shiv", "Berserker's Greaves", "Rapid Firecannon"],
+      "alt_first_options": ["Kraken Slayer"],
+      "vs_armor_heavy":    ["Lord Dominik's Regards"],
+      "vs_ap_heavy":       ["Mercurial Scimitar", "Wit's End"],
+      "vs_assassin":       ["Edge of Night"],
+      "vs_engage_heavy":   ["Edge of Night"],
+      "vs_kite_heavy":     [],
+      "notes": "On-hit + AS hyper carry。Statikk で wave clear + 移動射撃。"
+    }
+  }
+}

@@ -61,6 +61,98 @@ class ChampionMap:
 
 
 # ---------------------------------------------------------------------------
+# ChampionSkillMap (個別チャンプの詳細・スキル情報)
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+_HTML_TAG = _re.compile(r"<[^>]+>")
+_WS = _re.compile(r"\s+")
+
+
+def _clean_text(s: str, max_len: int = 200) -> str:
+    """HTMLタグ除去 + 連続空白除去 + 長さ制限"""
+    if not s:
+        return ""
+    s = _HTML_TAG.sub("", s)
+    s = _WS.sub(" ", s).strip()
+    return s[:max_len] + ("…" if len(s) > max_len else "")
+
+
+class ChampionSkillMap:
+    """ddragon championFull から各チャンプの Q/W/E/R 情報を引く"""
+
+    def __init__(self):
+        self._by_name: dict[str, dict] = {}
+        self._loaded = False
+        self._version: Optional[str] = None
+
+    def load(self) -> None:
+        if self._loaded:
+            return
+        with httpx.Client(timeout=30.0) as c:
+            versions = c.get(DDRAGON_VERSIONS_URL).json()
+            ver = versions[0]
+            full = c.get(
+                f"https://ddragon.leagueoflegends.com/cdn/{ver}/data/en_US/championFull.json"
+            ).json()["data"]
+        for name, info in full.items():
+            spells = info.get("spells", []) or []
+            passive = info.get("passive", {}) or {}
+            self._by_name[name] = {
+                "title":   info.get("title", ""),
+                "tags":    info.get("tags", []),
+                "passive": {
+                    "name": passive.get("name", ""),
+                    "desc": _clean_text(passive.get("description", ""), 150),
+                },
+                "Q": _summarize_spell(spells[0]) if len(spells) > 0 else None,
+                "W": _summarize_spell(spells[1]) if len(spells) > 1 else None,
+                "E": _summarize_spell(spells[2]) if len(spells) > 2 else None,
+                "R": _summarize_spell(spells[3]) if len(spells) > 3 else None,
+            }
+        self._loaded = True
+        self._version = ver
+        logger.info("ChampionSkillMap loaded: %d champions (patch %s)", len(self._by_name), ver)
+
+    def get(self, name: str) -> Optional[dict]:
+        if not self._loaded:
+            self.load()
+        return self._by_name.get(name)
+
+    def short_summary(self, name: str) -> str:
+        """LLMプロンプト用の超短い要約。3行ほど。"""
+        data = self.get(name)
+        if not data:
+            return f"{name}: (no data)"
+        parts = [f"**{name}** ({data['title']}, tags: {','.join(data['tags'])})"]
+        if data["passive"]["name"]:
+            parts.append(f"  Passive ({data['passive']['name']}): {data['passive']['desc']}")
+        for key in ("Q", "W", "E", "R"):
+            sp = data.get(key)
+            if sp:
+                parts.append(f"  {key} ({sp['name']}): {sp['desc']}")
+        return "\n".join(parts)
+
+
+def _summarize_spell(spell: dict) -> dict:
+    return {
+        "name": spell.get("name", ""),
+        "desc": _clean_text(spell.get("description", ""), 130),
+    }
+
+
+_skill_map_singleton: Optional[ChampionSkillMap] = None
+
+
+def get_skill_map() -> ChampionSkillMap:
+    global _skill_map_singleton
+    if _skill_map_singleton is None:
+        _skill_map_singleton = ChampionSkillMap()
+    return _skill_map_singleton
+
+
+# ---------------------------------------------------------------------------
 # Champ select 状態抽出
 # ---------------------------------------------------------------------------
 

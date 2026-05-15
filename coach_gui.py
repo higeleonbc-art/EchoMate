@@ -42,6 +42,7 @@ from coach_ai import coach_chat
 from coach_rank import resolve_target_rank
 from coach_champselect import (
     ChampionMap, extract_lane_picks, extract_full_picks, build_champselect_tip,
+    get_skill_map,
 )
 from lcu_client import LCUClient, LCUNotRunning
 from adc_knowledge import get_knowledge
@@ -562,10 +563,38 @@ class CoachAPI:
             (p for p in full["their_team"] if p["position"] == "BOTTOM"),
             None,
         )
+        my_sup_entry = next(
+            (p for p in full["my_team"] if p["position"] == "UTILITY"),
+            None,
+        )
+        enemy_sup_entry = next(
+            (p for p in full["their_team"] if p["position"] == "UTILITY"),
+            None,
+        )
         matchup_data = None
         if enemy_adc_entry and enemy_adc_entry.get("champion"):
             matchup_data = kb.matchup(full["me_champion"], enemy_adc_entry["champion"])
         champion_data = kb.get_champion(full["me_champion"])
+        item_rec = kb.get_item_rec(full["me_champion"])
+
+        # スキル情報 (ddragon championFull から)
+        skill_summaries: dict[str, str] = {}
+        try:
+            skill_map = get_skill_map()
+            if not skill_map._loaded:
+                skill_map.load()
+            for label, entry in [
+                ("me",        {"champion": full["me_champion"]}),
+                ("enemy_adc", enemy_adc_entry),
+                ("my_sup",    my_sup_entry),
+                ("enemy_sup", enemy_sup_entry),
+            ]:
+                ch = (entry or {}).get("champion")
+                if ch:
+                    summary = skill_map.short_summary(ch)
+                    skill_summaries[label] = summary
+        except Exception as e:
+            logger.warning("skill summaries failed: %s", e)
 
         # 4. LLM 呼び出し
         try:
@@ -573,6 +602,7 @@ class CoachAPI:
                 full["me_champion"], full["me_position"] or "BOTTOM",
                 full["my_team"], full["their_team"],
                 matchup_data=matchup_data, champion_data=champion_data,
+                item_rec=item_rec, skill_summaries=skill_summaries,
             )
             coaching = coach_chat(system, user)
         except Exception as e:
