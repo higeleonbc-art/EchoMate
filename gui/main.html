@@ -103,10 +103,19 @@
       <h2>Champ Select Assistant</h2>
       <div class="panel-actions">
         <span id="lcuConn" class="badge">LCU: ?</span>
+        <button class="btn" id="refreshChamp">Refresh</button>
+        <button class="btn primary" id="genChampCoaching">Generate Coaching</button>
       </div>
     </div>
     <div class="content" id="champContent">
       <div class="empty">Waiting for champ select to start in League client…</div>
+    </div>
+    <div class="content" id="champCoaching" style="margin-top:14px;display:none">
+      <div class="empty" id="champCoachingPlaceholder">
+        チャンプ確定後に「Generate Coaching」を押すと、マッチアップ・サポ連携・<br>
+        コアアイテム・集団戦positioningのLLMコーチングが表示されます (30〜60秒)
+      </div>
+      <div id="champCoachingBody" style="display:none"></div>
     </div>
   </section>
 

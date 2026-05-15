@@ -37,10 +37,12 @@ from riot_api import RiotAPIClient, RiotAPIError
 from match_review import build_review
 from coach_review_view import render_review_html
 from coach_summary import MultiMatchSummary, render_summary_html
-from coach_prompts import build_review_prompt
+from coach_prompts import build_review_prompt, build_full_champselect_prompt
 from coach_ai import coach_chat
 from coach_rank import resolve_target_rank
-from coach_champselect import ChampionMap, extract_lane_picks, build_champselect_tip
+from coach_champselect import (
+    ChampionMap, extract_lane_picks, extract_full_picks, build_champselect_tip,
+)
 from lcu_client import LCUClient, LCUNotRunning
 from adc_knowledge import get_knowledge
 import coach_profile
@@ -467,6 +469,75 @@ class CoachAPI:
                 "enemy_sup": picks.get("enemy_sup"),
             },
         }
+
+    def generate_champselect_coaching(self) -> dict:
+        """現セッションの全構成情報をLLMに投げて総合コーチングテキストを生成。
+
+        マッチアップ・サポ連携・コアアイテム・集団戦のpositioning を含む。
+        前回と同じ構成なら cache を返す。
+        """
+        # 1. LCU からfull picks
+        try:
+            client = LCUClient()
+            phase = client.gameflow_phase()
+            session = client.champ_select_session() if phase == "ChampSelect" else None
+            client.close()
+        except LCUNotRunning:
+            return {"error": "LCU not running"}
+        except Exception as e:
+            return {"error": f"LCU error: {e}"}
+
+        if not session:
+            return {"error": "Not in champ select"}
+
+        if not self._cmap_loaded:
+            try:
+                self._champ_map.load()
+                self._cmap_loaded = True
+            except Exception as e:
+                return {"error": f"ddragon load failed: {e}"}
+
+        full = extract_full_picks(session, self._champ_map)
+        if not full.get("me_champion"):
+            return {"error": "Your champion not yet picked"}
+
+        # 2. キャッシュキー（同じ構成なら再生成しない）
+        signature = self._champselect_signature(full)
+        if getattr(self, "_champselect_cache", None) and self._champselect_cache[0] == signature:
+            return {"cached": True, "coaching": self._champselect_cache[1], "picks": full}
+
+        # 3. マッチアップ + チャンプデータ取得
+        kb = get_knowledge()
+        enemy_adc_entry = next(
+            (p for p in full["their_team"] if p["position"] == "BOTTOM"),
+            None,
+        )
+        matchup_data = None
+        if enemy_adc_entry and enemy_adc_entry.get("champion"):
+            matchup_data = kb.matchup(full["me_champion"], enemy_adc_entry["champion"])
+        champion_data = kb.get_champion(full["me_champion"])
+
+        # 4. LLM 呼び出し
+        try:
+            system, user = build_full_champselect_prompt(
+                full["me_champion"], full["me_position"] or "BOTTOM",
+                full["my_team"], full["their_team"],
+                matchup_data=matchup_data, champion_data=champion_data,
+            )
+            coaching = coach_chat(system, user)
+        except Exception as e:
+            logger.exception("LLM champselect coaching failed")
+            return {"error": f"LLM call failed: {e}"}
+
+        # cache保存
+        self._champselect_cache = (signature, coaching)
+        return {"cached": False, "coaching": coaching, "picks": full}
+
+    @staticmethod
+    def _champselect_signature(full: dict) -> str:
+        my = "|".join(f"{p['position']}:{p['champion']}" for p in full["my_team"])
+        en = "|".join(f"{p['position']}:{p['champion']}" for p in full["their_team"])
+        return f"{my}__VS__{en}"
 
     # ============================================================
     # Live Overlay (別プロセス)

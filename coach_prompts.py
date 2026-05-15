@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Optional
 
 from match_review import Review
 
@@ -267,6 +268,103 @@ def build_review_prompt(review: Review) -> tuple[str, str]:
 ```
 
 このフォーマット以外のテキスト（前置き・後書き・思考過程・コーチ名の言及）は一切出力しないでください。
+"""
+    return COACH_SYSTEM_PROMPT, user
+
+
+def build_full_champselect_prompt(
+    me_champion: str,
+    me_position: str,
+    my_team: list[dict],
+    their_team: list[dict],
+    matchup_data: Optional[dict] = None,
+    champion_data: Optional[dict] = None,
+) -> tuple[str, str]:
+    """チャンプセレクト確定後の総合コーチング用プロンプト。
+
+    Args:
+        me_champion: 自分のチャンプ名
+        me_position: 自分のポジション (BOTTOM等)
+        my_team: [{champion, position}, ...] 5人
+        their_team: 同上
+        matchup_data: adc_knowledge.matchup() の結果 (score, tip)
+        champion_data: champions.json の自チャンプエントリ
+    """
+    my_sup = next((p for p in my_team if p["position"] == "UTILITY"), None)
+    enemy_adc = next((p for p in their_team if p["position"] == "BOTTOM"), None)
+
+    def fmt_team(team: list[dict]) -> str:
+        return "\n".join(
+            f"- {p['position']:>7}: {p['champion'] or '?'}"
+            for p in team
+        )
+
+    matchup_text = "(未収録マッチアップ)"
+    if matchup_data:
+        score = matchup_data.get("score", 0)
+        tip = matchup_data.get("tip") or ""
+        matchup_text = f"score {score:+d} ({matchup_data.get('source','?')}): {tip}"
+
+    champion_facts = ""
+    if champion_data:
+        champion_facts = (
+            f"\n## 自チャンプ ({me_champion}) 基本情報\n"
+            f"- 射程: {champion_data.get('range')}\n"
+            f"- lane_phase: {champion_data.get('lane_phase')}\n"
+            f"- scaling: {champion_data.get('scaling')}\n"
+            f"- power_spikes: {', '.join(champion_data.get('power_spikes', []) or [])}\n"
+            f"- 弱点: {', '.join(champion_data.get('weaknesses', []) or [])}\n"
+            f"- 標準ビルド: {', '.join(champion_data.get('key_items', []) or [])}\n"
+        )
+
+    user = f"""\
+Champion Select が確定しました。ADCとして以下の試合に挑みます。
+
+## 構成
+あなた: **{me_champion}** ({me_position})
+
+味方チーム:
+{fmt_team(my_team)}
+
+敵チーム:
+{fmt_team(their_team)}
+
+## マッチアップ情報 (botレーン: {me_champion} vs {enemy_adc['champion'] if enemy_adc else '?'})
+{matchup_text}
+{champion_facts}
+
+## 出力依頼
+
+以下4つのセクションをマークダウンで簡潔に出力してください。各セクション3行以内。
+
+### 1. Lane Phase（〜10分）
+- Lv1-2の trade window タイミング
+- 敵 {enemy_adc['champion'] if enemy_adc else '?'} の警戒すべきスキル/コンボ
+
+### 2. 味方サポ {my_sup['champion'] if my_sup else '?'} との連携
+- どのタイミングで仕掛けるか
+- 具体的なコンボ手順
+
+### 3. コアアイテム (1〜3コア)
+**敵チーム構成を考慮**してアイテムを動的選択。固定ビルドは禁止。
+- 1コア: [アイテム名] - [理由：敵 X が脅威 / spike 取りたい等]
+- 2コア: [アイテム名] - [理由]
+- 3コア: [アイテム名] - [理由]
+
+参考: 標準ビルドは {', '.join((champion_data or {}).get('key_items', []) or []) or 'なし'}
+
+敵チームに以下があれば該当アイテムを優先検討:
+- 重armor (Maokai/Trundle/Mundo等) → Lord Dominik's / Mortal Reminder
+- 重AP (Syndra/Vex/Brand等) → Wit's End / Maw of Malmortius / Mercurial
+- assassin / engage (Rengar/Zed/Malphite等) → Edge of Night / Guardian Angel
+
+### 4. 集団戦のポジショニング
+- 敵チームの最大脅威 (どのチャンプを最も意識)
+- ADCとしての立ち位置 (タンク後ろ / 後衛 / ペル系)
+
+このフォーマット以外のテキスト・思考過程は禁止。
+
+/no_think
 """
     return COACH_SYSTEM_PROMPT, user
 

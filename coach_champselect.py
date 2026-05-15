@@ -148,6 +148,78 @@ def extract_lane_picks(
 # Tip生成
 # ---------------------------------------------------------------------------
 
+def extract_full_picks(
+    session: dict,
+    cmap: ChampionMap,
+) -> dict:
+    """セッションから10人全員のチャンプ・ポジション情報を抽出。
+
+    LLMコーチング用に味方/敵チーム全体を返す。
+    """
+    my_cell_id = session.get("localPlayerCellId")
+    my_team_raw = session.get("myTeam", []) or []
+    their_team_raw = session.get("theirTeam", []) or []
+
+    pick_by_cell: dict[int, int] = {}
+    for ag in session.get("actions", []) or []:
+        for a in ag or []:
+            if a.get("type") != "pick":
+                continue
+            cid = a.get("championId") or 0
+            cell = a.get("actorCellId")
+            if cell is None or not cid:
+                continue
+            if a.get("completed") or cell not in pick_by_cell:
+                pick_by_cell[cell] = int(cid)
+
+    def resolve_cid(p: dict) -> int:
+        cid = p.get("championId") or 0
+        if not cid:
+            cid = pick_by_cell.get(p.get("cellId"), 0)
+        if not cid:
+            cid = p.get("championPickIntent") or 0
+        try:
+            return int(cid)
+        except (TypeError, ValueError):
+            return 0
+
+    POSITION_MAP = {
+        "top": "TOP", "jungle": "JUNGLE", "middle": "MIDDLE",
+        "bottom": "BOTTOM", "utility": "UTILITY",
+    }
+    OFFSET_LABEL = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]
+
+    def normalize_team(team_raw: list) -> list[dict]:
+        sorted_team = sorted(team_raw, key=lambda p: p.get("cellId", 0))
+        out = []
+        for i, p in enumerate(sorted_team):
+            pos = (p.get("assignedPosition") or "").lower()
+            pos_label = POSITION_MAP.get(pos)
+            if not pos_label and i < 5:
+                pos_label = OFFSET_LABEL[i]  # blind等のfallback
+            cid = resolve_cid(p)
+            out.append({
+                "cell_id": p.get("cellId"),
+                "champion": cmap.name(cid) if cid else None,
+                "position": pos_label or "?",
+            })
+        return out
+
+    my_team = normalize_team(my_team_raw)
+    their_team = normalize_team(their_team_raw)
+
+    me = next((p for p in my_team if p["cell_id"] == my_cell_id), None)
+    if me:
+        me["is_me"] = True
+
+    return {
+        "my_team": my_team,
+        "their_team": their_team,
+        "me_champion": me["champion"] if me else None,
+        "me_position": me["position"] if me else None,
+    }
+
+
 def build_champselect_tip(picks: dict) -> tuple[str, str, str]:
     """(severity, header, body) のタプルを返す"""
     kb = get_knowledge()

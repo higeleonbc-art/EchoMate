@@ -279,6 +279,38 @@ function escapeHtml(s) {
   }[m]));
 }
 
+document.getElementById("refreshChamp").addEventListener("click", loadChampSelect);
+document.getElementById("genChampCoaching").addEventListener("click", async () => {
+  const btn = document.getElementById("genChampCoaching");
+  const wrapper = document.getElementById("champCoaching");
+  const placeholder = document.getElementById("champCoachingPlaceholder");
+  const body = document.getElementById("champCoachingBody");
+  wrapper.style.display = "block";
+  placeholder.style.display = "block";
+  placeholder.textContent = "Generating coaching (LLM: 30〜60秒)…";
+  body.style.display = "none";
+  btn.disabled = true; btn.textContent = "Generating…";
+  try {
+    const res = await pywebview.api.generate_champselect_coaching();
+    if (res.error) {
+      placeholder.textContent = "ERROR: " + res.error;
+      toast(res.error, "warn");
+      return;
+    }
+    // simple markdown: line breaks
+    const html = escapeHtml(res.coaching || "").replace(/\n/g, "<br>");
+    body.innerHTML = html;
+    placeholder.style.display = "none";
+    body.style.display = "block";
+    if (res.cached) toast("(cached)", "info", 1500);
+    else toast("Coaching generated");
+  } catch (e) {
+    placeholder.textContent = "ERROR: " + e;
+  } finally {
+    btn.disabled = false; btn.textContent = "Generate Coaching";
+  }
+});
+
 // ======== Settings ========
 async function loadSettings() {
   try {
