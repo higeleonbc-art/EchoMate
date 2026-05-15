@@ -468,6 +468,58 @@ class CoachAPI:
             },
         }
 
+    def get_personal_stats_for_champ(self, my_champ: str,
+                                        enemy_champ: Optional[str] = None,
+                                        count: int = 30) -> dict:
+        """指定 my_champ での個人実績統計 (WR / マッチアップ / ビルド頻度)"""
+        client = _get_riot_client()
+        if not client:
+            return {"error": "Riot API key not configured"}
+        riot_id = coach_profile.get_riot_id()
+        if not riot_id or "#" not in riot_id:
+            return {"error": "Riot ID not set"}
+
+        try:
+            name, tag = riot_id.split("#", 1)
+            account = client.get_account_by_riot_id(name.strip(), tag.strip())
+            puuid = account["puuid"]
+            ids = client.get_match_ids(puuid, count=count, queue=None)
+            matches = client.get_matches_parallel(ids)
+            timelines = client.get_timelines_parallel(ids)
+        except RiotAPIError as e:
+            if e.status_code == 401:
+                return {"error": "API_KEY_EXPIRED"}
+            return {"error": f"Riot API: {e}"}
+
+        stats_list = []
+        for m, t in zip(matches, timelines):
+            if not m or not t:
+                continue
+            review = build_review(m, t, puuid)
+            if review:
+                stats_list.append(review.stats)
+
+        try:
+            from coach_stats import (
+                champion_winrate, matchup_winrate, aggregate_builds, get_item_map,
+            )
+            item_map = get_item_map()
+            if not item_map._loaded:
+                item_map.load()
+            return {
+                "my_champ":    my_champ,
+                "enemy_champ": enemy_champ,
+                "sample":      len(stats_list),
+                "champion_wr": champion_winrate(stats_list, my_champ),
+                "matchup_wr":  (matchup_winrate(stats_list, my_champ, enemy_champ)
+                                  if enemy_champ else None),
+                "build_freq":  aggregate_builds(matches, timelines, puuid, my_champ,
+                                                  top_n=3, item_map=item_map),
+            }
+        except Exception as e:
+            logger.exception("get_personal_stats_for_champ failed")
+            return {"error": str(e)}
+
     def generate_champselect_coaching(self) -> dict:
         """現セッションの全構成情報をLLMに投げて総合コーチングテキストを生成。
 

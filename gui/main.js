@@ -280,28 +280,113 @@ function escapeHtml(s) {
 }
 
 document.getElementById("refreshChamp").addEventListener("click", loadChampSelect);
+function renderPersonalStats(stats) {
+  const root = document.getElementById("champPersonalStats");
+  if (!stats || stats.error) {
+    root.style.display = "block";
+    root.innerHTML = `<div class="empty">個人実績取得に失敗: ${escapeHtml(stats?.error || "?")}</div>`;
+    return;
+  }
+  const wr = stats.champion_wr;
+  const muwr = stats.matchup_wr;
+  const bf = stats.build_freq || {};
+  let html = `<div class="section-title">Your Track Record (last ${stats.sample} games)</div>`;
+  if (wr) {
+    html += `<div style="margin-bottom:8px;font-size:13px">
+      <strong>${escapeHtml(stats.my_champ)}</strong>:
+      ${wr.wins}W-${wr.losses}L (<strong>${Math.round(wr.win_rate*100)}%</strong>, n=${wr.games})
+      ・avg KDA ${wr.avg_kda} ・avg CS/min ${wr.avg_cs_per_min}
+    </div>`;
+  } else {
+    html += `<div style="color:var(--fg-muted);font-size:12px;margin-bottom:8px">この${stats.sample}試合で ${escapeHtml(stats.my_champ)} の試合なし</div>`;
+  }
+  if (muwr) {
+    html += `<div style="margin-bottom:8px;font-size:13px">
+      vs <strong>${escapeHtml(muwr.enemy_champ)}</strong>:
+      ${muwr.wins}W-${muwr.games - muwr.wins}L (<strong>${Math.round(muwr.win_rate*100)}%</strong>, n=${muwr.games})
+      ・avg KDA ${muwr.avg_kda} ・avg Deaths ${muwr.avg_deaths}
+    </div>`;
+  }
+  if (bf.games && bf.games > 0 && Array.isArray(bf.positional)) {
+    html += `<div class="section-title" style="margin-top:14px">Your build frequency (${bf.games} ${escapeHtml(stats.my_champ)} games)</div>`;
+    html += `<div style="display:flex;gap:14px;flex-wrap:wrap">`;
+    ["1st core", "2nd core", "3rd core"].forEach((label, idx) => {
+      const pos = bf.positional[idx] || [];
+      const rows = pos.map(it =>
+        `<div style="font-size:12px">${escapeHtml(it.item_name)} <span style="color:var(--fg-muted)">×${it.count}</span></div>`
+      ).join("");
+      html += `<div class="bench-card" style="flex:1;min-width:160px">
+        <div class="bench-label">${label}</div>
+        ${rows || '<div style="color:var(--fg-muted);font-size:12px">no data</div>'}
+      </div>`;
+    });
+    html += `</div>`;
+    if (bf.first_item_winrate && bf.first_item_winrate.length > 0) {
+      html += `<div class="section-title" style="margin-top:14px">1st core win rate</div>`;
+      html += `<table class="kpi-table"><thead><tr><th>Item</th><th>Games</th><th>Wins</th><th>WR</th></tr></thead><tbody>`;
+      bf.first_item_winrate.forEach(r => {
+        const wrPct = Math.round(r.win_rate * 100);
+        const cls = wrPct >= 60 ? "achieved" : wrPct < 40 ? "missed" : "";
+        html += `<tr>
+          <td>${escapeHtml(r.item_name)}</td>
+          <td class="num">${r.games}</td>
+          <td class="num">${r.wins}</td>
+          <td class="num ${cls}">${wrPct}%</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    }
+  }
+  root.style.display = "block";
+  root.innerHTML = html;
+}
+
 document.getElementById("genChampCoaching").addEventListener("click", async () => {
   const btn = document.getElementById("genChampCoaching");
   const wrapper = document.getElementById("champCoaching");
   const placeholder = document.getElementById("champCoachingPlaceholder");
   const body = document.getElementById("champCoachingBody");
+  const personalRoot = document.getElementById("champPersonalStats");
   wrapper.style.display = "block";
   placeholder.style.display = "block";
   placeholder.textContent = "Generating coaching (LLM: 30〜60秒)…";
   body.style.display = "none";
+  personalRoot.style.display = "block";
+  personalRoot.innerHTML = '<div class="empty">個人実績を取得中…</div>';
   btn.disabled = true; btn.textContent = "Generating…";
+
+  // チャンプセレ session を取って my/enemy を判定 → personal stats を並行fetch
+  let infoPromise = pywebview.api.get_champselect_info();
+  let coachingPromise = pywebview.api.generate_champselect_coaching();
+
   try {
-    const res = await pywebview.api.generate_champselect_coaching();
+    const info = await infoPromise;
+    if (info?.in_champselect && info?.tip) {
+      // tip.header から自分のchamp と敵advを抽出するのは難しい → 別 API で picks 取り直す
+      const csInfo = await pywebview.api.generate_champselect_coaching();  // cache hit想定
+      // picks は coachingPromise の戻りに含まれる
+    }
+    const res = await coachingPromise;
     if (res.error) {
       placeholder.textContent = "ERROR: " + res.error;
       toast(res.error, "warn");
       return;
     }
-    // simple markdown: line breaks
     const html = escapeHtml(res.coaching || "").replace(/\n/g, "<br>");
     body.innerHTML = html;
     placeholder.style.display = "none";
     body.style.display = "block";
+
+    // 個人実績を picks から取得
+    if (res.picks && res.picks.me_champion) {
+      const enemy_adc = (res.picks.their_team || []).find(p => p.position === "BOTTOM");
+      const stats = await pywebview.api.get_personal_stats_for_champ(
+        res.picks.me_champion, enemy_adc?.champion || null, 30,
+      );
+      renderPersonalStats(stats);
+    } else {
+      personalRoot.style.display = "none";
+    }
     if (res.cached) toast("(cached)", "info", 1500);
     else toast("Coaching generated");
   } catch (e) {
