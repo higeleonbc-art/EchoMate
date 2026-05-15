@@ -303,7 +303,16 @@ def build_full_champselect_prompt(
     if matchup_data:
         score = matchup_data.get("score", 0)
         tip = matchup_data.get("tip") or ""
-        matchup_text = f"score {score:+d} ({matchup_data.get('source','?')}): {tip}"
+        matchup_text = f"主観 score {score:+d} ({matchup_data.get('source','?')}): {tip}"
+        # 各コーチ評価を併記
+        coaches = matchup_data.get("coaches") or {}
+        if coaches:
+            matchup_text += "\n\n各コーチ評価:"
+            for cname, cdata in coaches.items():
+                cscore = cdata.get("score")
+                ctip = cdata.get("tip") or ""
+                score_str = f"{cscore:+d}" if isinstance(cscore, (int, float)) else "?"
+                matchup_text += f"\n  - {cname.upper()}: score {score_str} -- {ctip}"
 
     champion_facts = ""
     if champion_data:

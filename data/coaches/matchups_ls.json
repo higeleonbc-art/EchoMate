@@ -1,0 +1,65 @@
+{
+  "_meta": {
+    "coach": "LS (Nick De Cesare)",
+    "approach": "LS の core philosophy (Lv2 spike最優先 / wave management / push priority / trade math) に基づく主要マッチアップ評価。transcript で直接対面言及されたペア + LS の典型思想から導出した評価。",
+    "scope": "ADC主要マッチアップ 約30ペア。残りは data/adc/matchups.json (Claude主観 fallback) を使用",
+    "score_scale": "-2 (LS視点で大きく不利) to +2 (LS視点で大きく有利)"
+  },
+  "matchups": {
+    "Caitlyn": {
+      "Lucian":  {"score": -1, "tip": "Lv2 spike を Lucian に先取りされたら trade 負け確定。1stウェーブを必ずpushしてLv2同時 or 先取。Lucian E+AA に対し Wall で minion line を切る。"},
+      "Jinx":    {"score":  2, "tip": "教科書通りのlane bullying。Lv2先取してQ+passive。trap で Jinx の back foot を強制。FB取ったら plate割って snowball。"},
+      "Vayne":   {"score":  2, "tip": "Lv1からRange + Wall で完全制圧。Vayne を lane 圏外に zone, CS denyして XP 差まで広げる。"},
+      "Twitch":  {"score":  2, "tip": "650 vs 480 で射程圧倒。 trap でステルス警戒ライン作る。 11分前に勝負を決める。"},
+      "Draven":  {"score": -1, "tip": "Lv1-3 アックス管理 Draven 強い。Q poke で削るが all-in 拒否。サポ peelもらって Lv6以降で逆転。"},
+      "Ezreal":  {"score":  1, "tip": "Range 100差 + E pre-Lv3 trade window。Trap で E retreat 経路を塞ぐ。"},
+      "Tristana":{"score":  1, "tip": "Lv6 前に勝負必須。Trist W jump 引き出してから罠+Q連発。 Range 拡張前に圧倒。"},
+      "Kalista": {"score":  0, "tip": "Kalista lv1 全力 vs Cait Lv2 spike の interplay。 lining を Cait 主導で wall ば lv2先取できる。"}
+    },
+    "Lucian": {
+      "Caitlyn": {"score":  1, "tip": "Lv2 先取が全て。1stウェーブ shove 直後に E+AA で all-in。 Cait の wall を anticipate して中入り tradeを通す。"},
+      "Jinx":    {"score":  2, "tip": "Lv1-11 圧倒。 every 30s で trade 通せる。 FB → plate → mid roam で 雪だるま。"},
+      "Ezreal":  {"score":  1, "tip": "Lv2 spike で E引き出してから次の trade で kill threshold。 Ez Manamune 前に殺し切る。"},
+      "Draven":  {"score":  0, "tip": "両者 lv2 dominant。 axe管理ミス見て E in。 サポ comp で勝敗が決まる。"},
+      "Vayne":   {"score":  2, "tip": "Vayne Lv1-11 圧倒可能。 Q + AA spam で 30s毎にtrade。 Lv11前に勝負を決める。"},
+      "Twitch":  {"score":  2, "tip": "Twitch lane で完全制圧。 push + zone でXP 削る。"}
+    },
+    "Jinx": {
+      "Caitlyn": {"score": -2, "tip": "Lv1-5 CS のみ。 trade 完全拒否。 freeze 引いて XPは取り続ける。 Kraken完成まで耐える。"},
+      "Lucian":  {"score": -2, "tip": "Lv6まで Doran's Shield + サポ peel。 absolute defense mode。 Lv11+ で scale 逆転。"},
+      "Twitch":  {"score":  1, "tip": "両 scaling hyper だが Jinx Range 525 vs Twitch 480。 Twitch invisible 警戒で cw 必須。"},
+      "Vayne":   {"score":  1, "tip": "Lv6前は Jinx 優位。 Q switch + W slow で Vayne の Q tumble 反復を阻害。"},
+      "Tristana":{"score":  0, "tip": "両hyper。 Trist Lv6 W dive 警戒。 Jinx は reset 維持で集団戦で逆転。"}
+    },
+    "Vayne": {
+      "Caitlyn": {"score": -2, "tip": "Lv1-11 絶対防御。 Doran's Shield 必須。 trade 拒否。 Lv11以降 true dmg で逆転狙う。"},
+      "Lucian":  {"score": -2, "tip": "Lv1-11 死にゲー。 サポ peel と CS のみで XPを守る。"},
+      "Jinx":    {"score": -1, "tip": "Lv1-11 Jinx 優位。 Vayne は Q tumble + AA で削るが trade window 限定的。"},
+      "Caitlyn_note": "LS: 'Vayne には 30%以下にしてWで処刑する dream' = Cait 視点"
+    },
+    "Twitch": {
+      "Caitlyn": {"score": -2, "tip": "射程差170 で lane 完全劣勢。 freeze 引けないなら ext push 受け入れて XP のみ。 Lv6 R range で関与待ち。"},
+      "Lucian":  {"score": -2, "tip": "近距離ハラスで death lane。 Doran Shield + 第二 D blade で耐え。"},
+      "Jinx":    {"score": -1, "tip": "Range 同等 hyper carry。 Twitch ステルスで先手取る。 Lv11+ R 同時 spike。"}
+    },
+    "Draven": {
+      "Caitlyn": {"score":  1, "tip": "Lv1-3 axe 全力で Cait を 50%以下に。 サポ engage 合わせる。 Lv6+ Cait 有利になるので前段で kill必要。"},
+      "Ezreal":  {"score":  2, "tip": "Ez Pre-Manamune を狩る教科書マッチアップ。 axe pressure + E 引き出して kill。"},
+      "Jinx":    {"score":  2, "tip": "Jinx Lv6前 殺し切る。 plate + mid roam で snowball。"},
+      "Vayne":   {"score":  2, "tip": "Vayne Lv1-11 死亡時間帯に死刑執行。"}
+    },
+    "Ezreal": {
+      "Caitlyn": {"score": -1, "tip": "Range差で push 取られる。 E mana 管理 + Q poke 主体。 Manamune完成まで scale 待ち。"},
+      "Lucian":  {"score": -1, "tip": "Lucian Lv2 spike 警戒。 E を温存して 全力 trade 拒否。"},
+      "Draven":  {"score": -2, "tip": "Doran Shield+ サポ peel。 Lv2-6 が死。Eで disengage 維持。"}
+    },
+    "Tristana": {
+      "Caitlyn": {"score": -1, "tip": "Lv1-5 Cait 圧倒。 Trist Lv6 W で逆襲開始。Lv11+ range up で勝負。"},
+      "Lucian":  {"score": -1, "tip": "Lucian Lv2-6 で押される。Lv6 W jump で対応。 後半逆転待ち。"}
+    },
+    "Kalista": {
+      "Caitlyn": {"score":  0, "tip": "Kalista Lv1 全力 vs Cait Lv2 spike の interplay。サポ comp で勝敗決まる。 Eスタックpoke で Cait 削り、Lv6 サポult engage で kill。"},
+      "Senna":   {"score":  2, "tip": "Senna 弱期間に殺し切る。 全力 lane で snowball。"}
+    }
+  }
+}

@@ -24,11 +24,27 @@ class ADCKnowledge:
         self._champions = self._load("champions.json")
         self._matchups = self._load("matchups.json")
         self._benchmarks = self._load("benchmarks.json")
+        self._coach_matchups = self._load_coach_matchups()
 
     def _load(self, filename: str) -> dict:
         path = self.data_dir / filename
         with path.open(encoding="utf-8") as f:
             return json.load(f)
+
+    def _load_coach_matchups(self) -> dict:
+        """data/coaches/matchups_*.json をロード"""
+        out: dict[str, dict] = {}
+        coaches_dir = self.data_dir.parent / "coaches"
+        if not coaches_dir.exists():
+            return out
+        for path in coaches_dir.glob("matchups_*.json"):
+            coach_key = path.stem.replace("matchups_", "")
+            try:
+                with path.open(encoding="utf-8") as f:
+                    out[coach_key] = json.load(f)
+            except Exception as e:
+                logger.warning("Failed to load coach matchups %s: %s", path, e)
+        return out
 
     # ------------------------------------------------------------------
     # チャンピオン
@@ -61,28 +77,58 @@ class ADCKnowledge:
         return max(-2, min(2, diff))
 
     def matchup(self, my_champ: str, enemy_champ: str) -> Optional[dict]:
-        """自分vs敵 のマッチアップ情報。
+        """自分vs敵 のマッチアップ情報（コーチ視点を含む）。
 
         優先順:
-          1. matchups.json の明示エントリ → そのまま返す（tipあり、scoreあれば優先）
-          2. matchups.json の tip だけのエントリ → score を infer で補完
-          3. 明示エントリ無し → infer で score 生成（tip は None）
-          4. champion未登録 → None
+          1. matchups.json の明示エントリ（Claude主観 fallback）
+          2. coach_matchups から各コーチの評価を集約
+          3. 上記とも無ければ infer (lane_phase 差) で score 生成
+          4. champion 未登録 → None
         """
         explicit = (
             self._matchups.get("matchups", {})
             .get(my_champ, {})
             .get(enemy_champ)
         )
+        # 各コーチ評価を集める
+        coaches: dict[str, dict] = {}
+        for coach_key, coach_data in self._coach_matchups.items():
+            c = (
+                coach_data.get("matchups", {})
+                .get(my_champ, {})
+                .get(enemy_champ)
+            )
+            if c and isinstance(c, dict) and ("score" in c or "tip" in c):
+                coaches[coach_key] = {
+                    "score": c.get("score"),
+                    "tip":   c.get("tip"),
+                }
+
         inferred = self.infer_matchup_score(my_champ, enemy_champ)
+
         if explicit:
             return {
                 "score": explicit.get("score", inferred if inferred is not None else 0),
                 "tip": explicit.get("tip"),
+                "coaches": coaches,
                 "source": "explicit",
             }
+        if coaches:
+            # コーチ評価のみある場合: 平均スコア
+            scores = [c["score"] for c in coaches.values() if c.get("score") is not None]
+            avg = round(sum(scores) / len(scores)) if scores else (inferred or 0)
+            primary_tip = next(
+                (c["tip"] for c in coaches.values() if c.get("tip")),
+                None,
+            )
+            return {
+                "score": avg,
+                "tip": primary_tip,
+                "coaches": coaches,
+                "source": "coach",
+            }
         if inferred is not None:
-            return {"score": inferred, "tip": None, "source": "inferred"}
+            return {"score": inferred, "tip": None, "coaches": {}, "source": "inferred"}
         return None
 
     def matchup_score(self, my_champ: str, enemy_champ: str) -> Optional[int]:
