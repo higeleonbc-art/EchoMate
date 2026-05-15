@@ -54,14 +54,14 @@ def compute_personal_benchmark(client: RiotAPIClient, puuid: str,
     if not match_ids:
         return {}
 
+    # 並列 + キャッシュで一気に取得
+    matches = client.get_matches_parallel(match_ids)
+    timelines = client.get_timelines_parallel(match_ids)
+
     statlist = []
     skipped = 0
-    for mid in match_ids:
-        try:
-            match = client.get_match(mid)
-            timeline = client.get_match_timeline(mid)
-        except RiotAPIError as e:
-            logger.warning("Skip match %s: %s", mid, e)
+    for mid, match, timeline in zip(match_ids, matches, timelines):
+        if not match or not timeline:
             skipped += 1
             continue
         review = build_review(match, timeline, puuid)
@@ -69,7 +69,6 @@ def compute_personal_benchmark(client: RiotAPIClient, puuid: str,
             skipped += 1
             continue
         s = review.stats
-        # ADC (BOTTOM) のみカウント。teamPosition 取得のため再確認
         me = next(
             (p for p in match["info"]["participants"] if p["puuid"] == puuid),
             None,

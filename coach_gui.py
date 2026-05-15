@@ -188,12 +188,10 @@ class CoachAPI:
             account = client.get_account_by_riot_id(name.strip(), tag.strip())
             puuid = account["puuid"]
             ids = client.get_match_ids(puuid, count=count, queue=None)
+            matches = client.get_matches_parallel(ids)  # 並列+キャッシュ
             rows = []
-            for mid in ids:
-                try:
-                    m = client.get_match(mid)
-                except RiotAPIError as e:
-                    logger.debug("Skip %s: %s", mid, e)
+            for mid, m in zip(ids, matches):
+                if not m:
                     continue
                 info = m["info"]
                 me = next((p for p in info["participants"] if p["puuid"] == puuid), None)
@@ -240,8 +238,8 @@ class CoachAPI:
             target_rank, _ = resolve_target_rank(client, puuid,
                                                   coach_profile.get("target_rank"))
 
-            match = client.get_match(match_id)
-            timeline = client.get_match_timeline(match_id)
+            match = client.get_match_cached(match_id)
+            timeline = client.get_timeline_cached(match_id)
             review = build_review(match, timeline, puuid, rank=target_rank)
             if not review:
                 return "ERROR: Player not found in match"
@@ -300,12 +298,12 @@ class CoachAPI:
             target_rank, _ = resolve_target_rank(client, puuid,
                                                   coach_profile.get("target_rank"))
             ids = client.get_match_ids(puuid, count=count, queue=None)
+            # 並列 + キャッシュで一気にfetch
+            matches = client.get_matches_parallel(ids)
+            timelines = client.get_timelines_parallel(ids)
             statlist = []
-            for mid in ids:
-                try:
-                    m = client.get_match(mid)
-                    t = client.get_match_timeline(mid)
-                except RiotAPIError:
+            for m, t in zip(matches, timelines):
+                if not m or not t:
                     continue
                 review = build_review(m, t, puuid, rank=target_rank)
                 if review:

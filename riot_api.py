@@ -182,6 +182,114 @@ class RiotAPIClient:
         return self._get(self.region, f"/lol/match/v5/matches/{match_id}/timeline")  # type: ignore[return-value]
 
     # ------------------------------------------------------------------
+    # 並列取得 + キャッシュ
+    # ------------------------------------------------------------------
+
+    def get_matches_parallel(self, match_ids: list[str],
+                              max_workers: int = 10,
+                              use_cache: bool = True) -> list[Optional[dict]]:
+        """複数の試合詳細を並列取得。キャッシュがあればそこから返す。"""
+        from concurrent.futures import ThreadPoolExecutor
+        try:
+            import coach_cache
+        except ImportError:
+            coach_cache = None
+
+        results: list[Optional[dict]] = [None] * len(match_ids)
+        to_fetch_idx: list[int] = []
+        for i, mid in enumerate(match_ids):
+            if use_cache and coach_cache:
+                cached = coach_cache.get_match(mid)
+                if cached:
+                    results[i] = cached
+                    continue
+            to_fetch_idx.append(i)
+
+        if not to_fetch_idx:
+            return results
+
+        def fetch(idx: int) -> tuple[int, Optional[dict]]:
+            try:
+                data = self.get_match(match_ids[idx])
+                if use_cache and coach_cache:
+                    coach_cache.put_match(match_ids[idx], data)
+                return idx, data
+            except RiotAPIError as e:
+                logger.warning("get_match %s failed: %s", match_ids[idx], e)
+                return idx, None
+
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(to_fetch_idx))) as pool:
+            for idx, data in pool.map(fetch, to_fetch_idx):
+                results[idx] = data
+        return results
+
+    def get_timelines_parallel(self, match_ids: list[str],
+                                max_workers: int = 10,
+                                use_cache: bool = True) -> list[Optional[dict]]:
+        """複数のtimelineを並列取得。キャッシュ対応。"""
+        from concurrent.futures import ThreadPoolExecutor
+        try:
+            import coach_cache
+        except ImportError:
+            coach_cache = None
+
+        results: list[Optional[dict]] = [None] * len(match_ids)
+        to_fetch_idx: list[int] = []
+        for i, mid in enumerate(match_ids):
+            if use_cache and coach_cache:
+                cached = coach_cache.get_timeline(mid)
+                if cached:
+                    results[i] = cached
+                    continue
+            to_fetch_idx.append(i)
+
+        if not to_fetch_idx:
+            return results
+
+        def fetch(idx: int) -> tuple[int, Optional[dict]]:
+            try:
+                data = self.get_match_timeline(match_ids[idx])
+                if use_cache and coach_cache:
+                    coach_cache.put_timeline(match_ids[idx], data)
+                return idx, data
+            except RiotAPIError as e:
+                logger.warning("get_timeline %s failed: %s", match_ids[idx], e)
+                return idx, None
+
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(to_fetch_idx))) as pool:
+            for idx, data in pool.map(fetch, to_fetch_idx):
+                results[idx] = data
+        return results
+
+    def get_match_cached(self, match_id: str) -> dict:
+        """単発 match 取得 (キャッシュ経由)"""
+        try:
+            import coach_cache
+            cached = coach_cache.get_match(match_id)
+            if cached:
+                return cached
+        except ImportError:
+            coach_cache = None
+        data = self.get_match(match_id)
+        if coach_cache:
+            coach_cache.put_match(match_id, data)
+        return data
+
+    def get_timeline_cached(self, match_id: str) -> dict:
+        """単発 timeline 取得 (キャッシュ経由)"""
+        try:
+            import coach_cache
+            cached = coach_cache.get_timeline(match_id)
+            if cached:
+                return cached
+        except ImportError:
+            coach_cache = None
+        data = self.get_match_timeline(match_id)
+        if coach_cache:
+            coach_cache.put_timeline(match_id, data)
+        return data
+
+    # ------------------------------------------------------------------
     # summoner-v4 / league-v4（platform）
     # ------------------------------------------------------------------
 
