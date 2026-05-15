@@ -247,29 +247,51 @@ async function loadChampSelect() {
     const res = await pywebview.api.get_champselect_info();
     const root = document.getElementById("champContent");
     const conn = document.getElementById("lcuConn");
+
+    // エラー優先表示（接続OKでも内部 error フィールドが入る場合あり）
+    if (res.error) {
+      conn.textContent = res.connected ? ("LCU: " + (res.phase || "error")) : "LCU: error";
+      conn.className = "badge bad";
+      root.innerHTML = `<div class="empty" style="color:var(--danger);white-space:pre-wrap">
+ERROR: ${escapeHtml(res.error)}
+
+連絡先内訳:
+- "ddragon load failed": インターネット接続を確認 (championデータ取得失敗)
+- "session fetch failed": LCU は起動中だがチャンプセレ情報取得失敗
+- "Unable to fetch": LoL クライアントが起動してない or 再起動が必要</div>`;
+      return;
+    }
     if (!res.connected) {
       conn.textContent = "LCU: disconnected";
       conn.className = "badge bad";
       root.innerHTML = '<div class="empty">League client not running.</div>';
       return;
     }
-    conn.textContent = "LCU: connected";
+    conn.textContent = "LCU: " + (res.phase || "connected");
     conn.className = "badge ok";
     if (!res.in_champselect) {
       root.innerHTML = `<div class="empty">Phase: ${res.phase || "?"}<br>Waiting for Champ Select…</div>`;
       return;
     }
     const tip = res.tip;
+    if (!tip) {
+      root.innerHTML = `<div class="empty">チャンプセレ中ですが pick 情報がまだ取れていません (Refresh で再取得)</div>`;
+      return;
+    }
     const cls = tip.severity === "danger" ? "danger" : tip.severity === "warn" ? "warn" : "ok";
     root.innerHTML = `
       <div class="cs-card ${cls}">
-        <div class="cs-header">${tip.header}</div>
-        <div class="cs-tip">${escapeHtml(tip.body)}</div>
-        <div class="cs-meta">your sup: ${tip.my_sup || "?"} · enemy sup: ${tip.enemy_sup || "?"}</div>
+        <div class="cs-header">${escapeHtml(tip.header || "")}</div>
+        <div class="cs-tip">${escapeHtml(tip.body || "")}</div>
+        <div class="cs-meta">your sup: ${escapeHtml(tip.my_sup || "?")} · enemy sup: ${escapeHtml(tip.enemy_sup || "?")}</div>
       </div>
     `;
   } catch (e) {
     toast("Champ select fetch failed: " + e, "error");
+    const root = document.getElementById("champContent");
+    if (root) {
+      root.innerHTML = `<div class="empty" style="color:var(--danger)">FATAL: ${escapeHtml(String(e))}</div>`;
+    }
   }
 }
 function escapeHtml(s) {
