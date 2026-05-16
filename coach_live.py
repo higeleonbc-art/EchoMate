@@ -145,6 +145,9 @@ class LiveCoachLoop:
         client = LiveClient()
         in_game = False
         last_game_mode: Optional[str] = None
+        post_game_announce_at: Optional[float] = None
+        POSTGAME_LINGER_SEC = 30.0   # 試合終了表示を残す秒数（その後 STANDBY に戻る）
+
         try:
             while not self._stop.is_set():
                 try:
@@ -159,41 +162,62 @@ class LiveCoachLoop:
                     stats = None
 
                 if summary and stats:
+                    # 試合中
+                    if not in_game:
+                        # 新試合検知 → 状態リセット
+                        post_game_announce_at = None
                     in_game = True
                     last_game_mode = stats.get("gameMode")
                     snap = Snapshot.from_live(summary, stats.get("gameTime", 0))
                     sev, header, body = evaluate(snap, self.cs_target)
                     self.overlay.update_text(body, header_text=header, severity=sev)
                     time.sleep(POLL_INTERVAL_SEC)
-                else:
-                    if in_game:
-                        # 試合終了を検知
-                        is_practice = last_game_mode in ("PRACTICETOOL", "TUTORIAL")
-                        if is_practice:
-                            body = (
-                                "プラクティスツール / チュートリアルは "
-                                "Riot APIに記録されないためレビュー対象外です。\n"
-                                "ESCで閉じて、ランク戦でお試しを。"
-                            )
-                        else:
-                            body = (
-                                "Coach Hub (GUI) を開いている場合は\n"
-                                "Latest Match タブが自動更新されます。\n"
-                                "（Riot API反映に2〜5分かかる場合あり）\n\n"
-                                "ESCで閉じて結果を確認してください。"
-                            )
-                        self.overlay.update_text(
-                            body,
-                            header_text="MATCH ENDED",
-                            severity="ok",
+                    continue
+
+                # 試合外
+                if in_game:
+                    # 試合終了直後 → MATCH ENDED 表示してフラグ立て、ループ継続
+                    is_practice = last_game_mode in ("PRACTICETOOL", "TUTORIAL")
+                    if is_practice:
+                        body = (
+                            "プラクティスツール / チュートリアルは "
+                            "Riot APIに記録されないためレビュー対象外です。\n"
+                            f"{int(POSTGAME_LINGER_SEC)}秒後に待機表示に戻ります。"
                         )
-                        return
+                    else:
+                        body = (
+                            "Coach Hub (GUI) を開いている場合は\n"
+                            "Latest Match タブが自動更新されます。\n"
+                            "（Riot API反映に2〜5分かかる場合あり）\n\n"
+                            f"{int(POSTGAME_LINGER_SEC)}秒後に待機表示へ戻り、次試合を監視します。"
+                        )
                     self.overlay.update_text(
-                        f"target rank: {self.rank}\nCS/min target: {self.cs_target}\n試合開始を待機中…",
-                        header_text="STANDBY",
+                        body,
+                        header_text="MATCH ENDED",
                         severity="ok",
                     )
+                    in_game = False
+                    post_game_announce_at = time.time()
                     time.sleep(WAIT_INTERVAL_SEC)
+                    continue
+
+                # MATCH ENDED 表示の余韻中
+                if post_game_announce_at is not None:
+                    elapsed = time.time() - post_game_announce_at
+                    if elapsed < POSTGAME_LINGER_SEC:
+                        time.sleep(WAIT_INTERVAL_SEC)
+                        continue
+                    # 余韻終了 → STANDBY に戻る
+                    post_game_announce_at = None
+
+                # 通常の待機表示
+                self.overlay.update_text(
+                    f"target rank: {self.rank}\nCS/min target: {self.cs_target}\n"
+                    f"試合開始を待機中…\n\n(終了したオーバーレイは GUI Stopボタンで閉じてください)",
+                    header_text="STANDBY",
+                    severity="ok",
+                )
+                time.sleep(WAIT_INTERVAL_SEC)
         finally:
             client.close()
 
