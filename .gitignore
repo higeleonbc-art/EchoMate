@@ -30,6 +30,7 @@ game_knowledge.json
 .coach_kpi.db
 .coach_personal.json
 .coach_match_cache.db
+.coach.log
 
 # 動画 transcript の生キャッシュ・中間ファイル（再配布NG / 要約JSONのみtracked）
 data/coaches/_transcripts/

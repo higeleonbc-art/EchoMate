@@ -414,6 +414,22 @@ class CoachAPI:
             return {"deleted": False, "error": str(e)}
 
     # ============================================================
+    # Debug: ログ取得
+    # ============================================================
+
+    def get_recent_log(self, lines: int = 200) -> dict:
+        """ローカル .coach.log の末尾N行を返す（GUI Settings から見られるよう）"""
+        try:
+            log_path = Path(__file__).parent / ".coach.log"
+            if not log_path.exists():
+                return {"text": "(no log file)", "path": str(log_path)}
+            content = log_path.read_text(encoding="utf-8", errors="replace")
+            tail = "\n".join(content.splitlines()[-lines:])
+            return {"text": tail, "path": str(log_path), "size": len(content)}
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ============================================================
     # Champ Select
     # ============================================================
 
@@ -724,10 +740,18 @@ def _js_str(s: str) -> str:
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    # ファイル + stderr の両方にログを出す
+    log_path = Path(__file__).parent / ".coach.log"
+    handlers = [
+        logging.FileHandler(str(log_path), mode="a", encoding="utf-8"),
+        logging.StreamHandler(),
+    ]
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=handlers,
     )
+    logging.info("==== ADC Coach Hub start ==== log file: %s", log_path)
 
     api = CoachAPI()
     gui_dir = Path(__file__).parent / "gui"
