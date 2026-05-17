@@ -29,6 +29,36 @@ def is_lcu_match_id(match_id: str) -> bool:
     return isinstance(match_id, str) and match_id.startswith(LCU_MATCH_ID_PREFIX)
 
 
+# 構造ログを1度だけ出すフラグ
+_DEBUG_LOGGED = False
+
+
+def _matches_logged() -> bool:
+    return _DEBUG_LOGGED
+
+
+def _mark_matches_logged() -> None:
+    global _DEBUG_LOGGED
+    _DEBUG_LOGGED = True
+
+
+def _find_me_in_lcu_game(g: dict, puuid: str) -> Optional[dict]:
+    """LCU game オブジェクトから自分の participant を探す（複数フィールドで照合）"""
+    # 1) participants[].puuid 直接 (最近のLCU)
+    for p in (g.get("participants") or []):
+        if p.get("puuid") == puuid:
+            return p
+    # 2) participantIdentities[].player.puuid 経由 (旧)
+    for pi in (g.get("participantIdentities") or []):
+        player = pi.get("player") or {}
+        if player.get("puuid") == puuid:
+            target_pid = pi.get("participantId")
+            for p in (g.get("participants") or []):
+                if p.get("participantId") == target_pid:
+                    return p
+    return None
+
+
 def lcu_game_to_riot_v5(lcu_game: dict, champ_map) -> dict:
     """LCU の game オブジェクトを Riot match-v5 形式に変換"""
     game_id = lcu_game.get("gameId")
@@ -40,13 +70,20 @@ def lcu_game_to_riot_v5(lcu_game: dict, champ_map) -> dict:
     # custom 試合は queueId が 0 の場合があるので、QUEUE_LABELS で "Custom" 表示用に -1 にする
     effective_queue = -1 if is_custom else queue_id
 
-    # puuid と participantId の対応取得
+    # puuid と participantId の対応取得 (新旧両方の構造に対応)
     pid_to_puuid: dict[int, str] = {}
+    # 旧: participantIdentities[].player.puuid
     for pi in lcu_game.get("participantIdentities", []) or []:
         pid = pi.get("participantId")
-        puuid = (pi.get("player") or {}).get("puuid", "")
-        if pid is not None:
-            pid_to_puuid[pid] = puuid
+        p_puuid = (pi.get("player") or {}).get("puuid", "")
+        if pid is not None and p_puuid:
+            pid_to_puuid[pid] = p_puuid
+    # 新: participants[].puuid 直接 (これがあれば上書き)
+    for p in lcu_game.get("participants", []) or []:
+        pid = p.get("participantId")
+        p_puuid = p.get("puuid", "")
+        if pid is not None and p_puuid:
+            pid_to_puuid[pid] = p_puuid
 
     # 各 participant を Riot v5 形式に
     participants_v5: list[dict] = []
@@ -172,13 +209,7 @@ def fetch_lcu_history(puuid: str, count: int = 20,
 
     # デバッグ: 直近5件の gameType / queueId / mapId / champion を log に
     for i, g in enumerate(games[:5]):
-        me = next(
-            (p for p in (g.get("participants") or [])
-             if any(pi.get("participantId") == p.get("participantId")
-                    and (pi.get("player") or {}).get("puuid") == puuid
-                    for pi in (g.get("participantIdentities") or []))),
-            None,
-        )
+        me = _find_me_in_lcu_game(g, puuid)
         logger.info(
             "  game[%d] type=%s queueId=%s mapId=%s gameMode=%s puuid_match=%s",
             i,
@@ -188,6 +219,28 @@ def fetch_lcu_history(puuid: str, count: int = 20,
             g.get("gameMode"),
             bool(me),
         )
+
+    # 構造デバッグ (1度だけ): participants[0] / participantIdentities[0] の利用可能キー
+    if games and not _matches_logged():
+        g0 = games[0]
+        parts = g0.get("participants") or []
+        ids = g0.get("participantIdentities") or []
+        if parts:
+            logger.info("  DEBUG participants[0] keys: %s", sorted(parts[0].keys()))
+            if "puuid" in parts[0]:
+                logger.info("  DEBUG participants[0].puuid preview: %r",
+                              (parts[0].get("puuid") or "")[:20])
+        if ids:
+            logger.info("  DEBUG participantIdentities[0] keys: %s", sorted(ids[0].keys()))
+            player = ids[0].get("player") or {}
+            logger.info("  DEBUG participantIdentities[0].player keys: %s", sorted(player.keys()))
+            for k in ("puuid", "summonerName", "gameName", "tagLine", "summonerId"):
+                if k in player:
+                    val = player.get(k) or ""
+                    if isinstance(val, str) and len(val) > 25:
+                        val = val[:25] + "..."
+                    logger.info("    player.%s = %r", k, val)
+        _mark_matches_logged()
 
     if include_matchmaker:
         return games
