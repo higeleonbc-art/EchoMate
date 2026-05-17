@@ -111,3 +111,29 @@ class LCUClient:
     def gameflow_phase(self) -> str:
         """現在のゲームフェーズ: None / Lobby / ChampSelect / InProgress / EndOfGame など"""
         return self.get("/lol-gameflow/v1/gameflow-phase")  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------
+    # Match History (カスタム試合を含むローカル履歴)
+    # ------------------------------------------------------------------
+
+    def get_match_history(self, puuid: str, count: int = 20) -> dict:
+        """ローカルクライアントの試合履歴（カスタム含む）。
+
+        返り値は LCU 形式 (games.games[]). custom 試合の gameType は "CUSTOM_GAME"。
+        通常 matchmaker 試合は "MATCHED_GAME"。
+        """
+        end = max(0, count - 1)
+        return self.get(  # type: ignore[return-value]
+            f"/lol-match-history/v1/products/lol/{puuid}/matches"
+            f"?begIndex=0&endIndex={end}"
+        )
+
+    def get_match_detail_by_game_id(self, game_id: int) -> dict:
+        """LCU から単一試合詳細を取得"""
+        return self.get(f"/lol-match-history/v1/games/{game_id}")  # type: ignore[return-value]
+
+    def get_match_timeline_by_game_id(self, puuid: str, game_id: int) -> dict:
+        """LCU から timeline を取得 (custom含む)"""
+        return self.get(  # type: ignore[return-value]
+            f"/lol-match-history/v1/products/lol/{puuid}/timelines/{game_id}"
+        )

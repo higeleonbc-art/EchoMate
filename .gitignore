@@ -33,6 +33,9 @@ game_knowledge.json
 .coach.log
 .coach_live.log
 
+# 一時的なテストスクリプト (個人 PUUID/ Riot ID が含まれる)
+_test_*.py
+
 # 動画 transcript の生キャッシュ・中間ファイル（再配布NG / 要約JSONのみtracked）
 data/coaches/_transcripts/
 data/coaches/_*.json

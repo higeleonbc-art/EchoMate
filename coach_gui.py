@@ -44,6 +44,9 @@ from coach_champselect import (
     ChampionMap, extract_lane_picks, extract_full_picks, build_champselect_tip,
     get_skill_map,
 )
+from coach_lcu_history import (
+    fetch_lcu_history, fetch_lcu_match_full, lcu_game_to_riot_v5, is_lcu_match_id,
+)
 from lcu_client import LCUClient, LCUNotRunning
 from adc_knowledge import get_knowledge
 import coach_profile
@@ -55,6 +58,7 @@ logger = logging.getLogger("coach_gui")
 JST = timezone(timedelta(hours=9))
 
 QUEUE_LABELS: dict[int, str] = {
+    -1: "Custom",
     420: "RankedSolo", 440: "RankedFlex", 400: "NormalDraft",
     430: "NormalBlind", 450: "ARAM", 700: "Clash",
     1700: "Arena", 490: "Quickplay", 480: "SwiftPlay",
@@ -206,8 +210,39 @@ class CoachAPI:
                     "queue":    QUEUE_LABELS.get(info["queueId"], f"Q{info['queueId']}"),
                     "champion": me["championName"],
                     "kda":      f"{me['kills']}/{me['deaths']}/{me['assists']}",
+                    "gameCreation": info["gameCreation"],
                 })
-            return {"matches": rows}
+
+            # LCU からカスタム試合を merge (LCU 起動中のみ)
+            if not self._cmap_loaded:
+                try:
+                    self._champ_map.load(); self._cmap_loaded = True
+                except Exception:
+                    pass
+            lcu_games = fetch_lcu_history(puuid, count=count, include_matchmaker=False)
+            for g in lcu_games:
+                m_v5 = lcu_game_to_riot_v5(g, self._champ_map)
+                info = m_v5["info"]
+                me = next((p for p in info["participants"] if p["puuid"] == puuid), None)
+                if not me:
+                    continue
+                ts = datetime.fromtimestamp(info["gameCreation"] / 1000, tz=JST)
+                rows.append({
+                    "match_id": m_v5["metadata"]["matchId"],
+                    "date":     ts.strftime("%m-%d %H:%M"),
+                    "result":   "WIN " if me.get("win") else "LOSS",
+                    "queue":    "Custom",
+                    "champion": me["championName"] or f"id:{me['championId']}",
+                    "kda":      f"{me['kills']}/{me['deaths']}/{me['assists']}",
+                    "gameCreation": info["gameCreation"],
+                })
+
+            # gameCreation 降順でソート (新しい順)
+            rows.sort(key=lambda r: r.get("gameCreation", 0), reverse=True)
+            # gameCreation は内部用なので返さない
+            for r in rows:
+                r.pop("gameCreation", None)
+            return {"matches": rows[:count]}
         except RiotAPIError as e:
             if e.status_code == 401:
                 return {"error": "API_KEY_EXPIRED", "matches": []}
@@ -239,8 +274,20 @@ class CoachAPI:
             target_rank, _ = resolve_target_rank(client, puuid,
                                                   coach_profile.get("target_rank"))
 
-            match = client.get_match_cached(match_id)
-            timeline = client.get_timeline_cached(match_id)
+            # LCU 試合 (custom) は別経路で取得
+            if is_lcu_match_id(match_id):
+                if not self._cmap_loaded:
+                    try:
+                        self._champ_map.load(); self._cmap_loaded = True
+                    except Exception:
+                        pass
+                lcu_result = fetch_lcu_match_full(puuid, match_id, self._champ_map)
+                if not lcu_result:
+                    return "ERROR: LCU 試合の取得失敗（LoLクライアントを起動してください）"
+                match, timeline = lcu_result
+            else:
+                match = client.get_match_cached(match_id)
+                timeline = client.get_timeline_cached(match_id)
             review = build_review(match, timeline, puuid, rank=target_rank)
             if not review:
                 return "ERROR: Player not found in match"
