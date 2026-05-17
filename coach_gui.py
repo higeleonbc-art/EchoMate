@@ -221,12 +221,17 @@ class CoachAPI:
                     pass
             # Riot ID を分解して LCU history の fallback 照合に使う
             _game_name, _tag_line = (riot_id.split("#", 1) + [""])[:2]
+            _game_name = _game_name.strip()
+            _tag_line = _tag_line.strip()
             lcu_games = fetch_lcu_history(
                 puuid, count=count, include_matchmaker=False,
-                game_name=_game_name.strip(), tag_line=_tag_line.strip(),
+                game_name=_game_name, tag_line=_tag_line,
             )
             for g in lcu_games:
-                m_v5 = lcu_game_to_riot_v5(g, self._champ_map)
+                m_v5 = lcu_game_to_riot_v5(
+                    g, self._champ_map,
+                    my_riot_puuid=puuid, my_game_name=_game_name, my_tag_line=_tag_line,
+                )
                 info = m_v5["info"]
                 me = next((p for p in info["participants"] if p["puuid"] == puuid), None)
                 if not me:
@@ -286,7 +291,11 @@ class CoachAPI:
                         self._champ_map.load(); self._cmap_loaded = True
                     except Exception:
                         pass
-                lcu_result = fetch_lcu_match_full(puuid, match_id, self._champ_map)
+                _game_name, _tag_line = (riot_id.split("#", 1) + [""])[:2]
+                lcu_result = fetch_lcu_match_full(
+                    puuid, match_id, self._champ_map,
+                    game_name=_game_name.strip(), tag_line=_tag_line.strip(),
+                )
                 if not lcu_result:
                     return "ERROR: LCU 試合の取得失敗（LoLクライアントを起動してください）"
                 match, timeline = lcu_result

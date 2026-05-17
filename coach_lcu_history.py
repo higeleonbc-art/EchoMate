@@ -82,8 +82,16 @@ def _find_me_in_lcu_game(g: dict, puuid: str,
     return None
 
 
-def lcu_game_to_riot_v5(lcu_game: dict, champ_map) -> dict:
-    """LCU の game オブジェクトを Riot match-v5 形式に変換"""
+def lcu_game_to_riot_v5(lcu_game: dict, champ_map,
+                          my_riot_puuid: Optional[str] = None,
+                          my_game_name: Optional[str] = None,
+                          my_tag_line: Optional[str] = None) -> dict:
+    """LCU の game オブジェクトを Riot match-v5 形式に変換.
+
+    LCU の puuid は Riot Web API の puuid と形式が異なる (UUID vs Base64) ため、
+    自分の participant の puuid のみ my_riot_puuid に置換して、後続の
+    build_review() で自分を正しく特定できるようにする。
+    """
     game_id = lcu_game.get("gameId")
     duration = lcu_game.get("gameDuration") or 0
     queue_id = lcu_game.get("queueId") or 0
@@ -155,6 +163,22 @@ def lcu_game_to_riot_v5(lcu_game: dict, champ_map) -> dict:
             "damageDealtToObjectives": stats.get("damageDealtToObjectives", 0),
             "win":                     stats.get("win", False),
         })
+
+    # 自分の participant を gameName/tagLine で特定し puuid を Riot API側のものに置換
+    if my_riot_puuid and my_game_name:
+        my_pid: Optional[int] = None
+        for pi in lcu_game.get("participantIdentities", []) or []:
+            player = pi.get("player") or {}
+            if player.get("gameName") == my_game_name:
+                if my_tag_line and player.get("tagLine") and player.get("tagLine") != my_tag_line:
+                    continue
+                my_pid = pi.get("participantId")
+                break
+        if my_pid is not None:
+            for p in participants_v5:
+                if p["participantId"] == my_pid:
+                    p["puuid"] = my_riot_puuid
+                    break
 
     return {
         "metadata": {
@@ -303,11 +327,14 @@ def fetch_lcu_history(puuid: str, count: int = 20,
     return customs
 
 
-def fetch_lcu_match_full(puuid: str, lcu_match_id: str, champ_map) -> Optional[tuple[dict, dict]]:
+def fetch_lcu_match_full(puuid: str, lcu_match_id: str, champ_map,
+                          game_name: Optional[str] = None,
+                          tag_line: Optional[str] = None) -> Optional[tuple[dict, dict]]:
     """単一の LCU 試合 (match + timeline) を v5 形式で返す。
 
     Args:
         lcu_match_id: "LCU_xxx" 形式
+        game_name / tag_line: 自分の puuid 上書き用 (LCU UUID → Riot API puuid)
     Returns:
         (match_v5, timeline_v5) or None
     """
@@ -330,4 +357,8 @@ def fetch_lcu_match_full(puuid: str, lcu_match_id: str, champ_map) -> Optional[t
     except Exception as e:
         logger.warning("LCU match fetch failed: %s", e)
         return None
-    return lcu_game_to_riot_v5(raw_match, champ_map), lcu_timeline_to_riot_v5(raw_tl)
+    v5_match = lcu_game_to_riot_v5(
+        raw_match, champ_map,
+        my_riot_puuid=puuid, my_game_name=game_name, my_tag_line=tag_line,
+    )
+    return v5_match, lcu_timeline_to_riot_v5(raw_tl)
