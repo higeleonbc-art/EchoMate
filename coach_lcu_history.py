@@ -218,15 +218,35 @@ def _lane_role_to_position(lane: str, role: str) -> str:
 def lcu_timeline_to_riot_v5(lcu_timeline: dict) -> dict:
     """LCU timeline → Riot match-v5 timeline 形式。
 
-    LCU の構造は v5 と概ね同じだが、外側のラッパーが違う。
-    LCU: {"frames": [...], "frameInterval": ..., "interval": ...}
-    v5:  {"info": {"frames": [...], "frameInterval": ...}}
+    LCU の構造は v5 と概ね同じだが、外側のラッパーが違う:
+        LCU: {"frames": [...], "frameInterval": ..., "interval": ...}
+        v5:  {"info": {"frames": [...], "frameInterval": ...}}
+
+    フレーム内構造の差:
+      - LCU frame: {"events": [...], "participantFrames": {...}, "timestamp": ...}
+        participantFrames は {"1": {"minionsKilled": ..., "totalGold": ...}, ...}
+        通常 v5 と同じ構造のはずだが、念のため log で確認できるよう構造を出す。
     """
+    frames = lcu_timeline.get("frames", []) or [] if "info" not in lcu_timeline else \
+             lcu_timeline.get("info", {}).get("frames", []) or []
+
+    # デバッグ: frame[0] の構造を出す（最初の試合変換時のみ目立たせる）
+    if frames:
+        f0 = frames[0]
+        pf = f0.get("participantFrames") or {}
+        if pf:
+            first_key = next(iter(pf), None)
+            sample = pf.get(first_key, {}) if first_key else {}
+            logger.debug(
+                "LCU timeline frame[0] participantFrames key sample: key=%r keys_in_value=%s",
+                first_key, sorted(sample.keys()) if isinstance(sample, dict) else type(sample),
+            )
+
     if "info" in lcu_timeline:
         return lcu_timeline  # 既にv5形式
     return {
         "info": {
-            "frames":        lcu_timeline.get("frames", []) or [],
+            "frames":        frames,
             "frameInterval": lcu_timeline.get("frameInterval") or lcu_timeline.get("interval", 60000),
         }
     }
@@ -361,4 +381,32 @@ def fetch_lcu_match_full(puuid: str, lcu_match_id: str, champ_map,
         raw_match, champ_map,
         my_riot_puuid=puuid, my_game_name=game_name, my_tag_line=tag_line,
     )
+    # デバッグ: timeline 構造を log
+    logger.info(
+        "LCU timeline raw keys: %s, frames=%d",
+        sorted(raw_tl.keys()) if isinstance(raw_tl, dict) else type(raw_tl),
+        len(raw_tl.get("frames", []) or raw_tl.get("info", {}).get("frames", []) or []),
+    )
+    if isinstance(raw_tl, dict):
+        frames = raw_tl.get("frames") or raw_tl.get("info", {}).get("frames") or []
+        if frames:
+            f0 = frames[0]
+            logger.info("  frame[0] keys: %s", sorted(f0.keys()) if isinstance(f0, dict) else type(f0))
+            pf = f0.get("participantFrames") if isinstance(f0, dict) else None
+            if isinstance(pf, dict) and pf:
+                first_key = next(iter(pf))
+                logger.info("  participantFrames first key=%r keys_in_value=%s",
+                              first_key,
+                              sorted(pf[first_key].keys()) if isinstance(pf[first_key], dict) else type(pf[first_key]))
+            # 10分目の frame の participantFrames を確認
+            if len(frames) > 10:
+                f10 = frames[10]
+                pf10 = (f10 or {}).get("participantFrames") or {}
+                if pf10:
+                    fk = next(iter(pf10))
+                    sample = pf10[fk]
+                    logger.info("  frame[10] participantFrames[%r]: minionsKilled=%s jungleMinionsKilled=%s totalGold=%s",
+                                  fk, sample.get("minionsKilled") if isinstance(sample, dict) else None,
+                                  sample.get("jungleMinionsKilled") if isinstance(sample, dict) else None,
+                                  sample.get("totalGold") if isinstance(sample, dict) else None)
     return v5_match, lcu_timeline_to_riot_v5(raw_tl)
