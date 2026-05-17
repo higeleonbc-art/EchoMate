@@ -90,12 +90,25 @@ def _find_participant_id(match: dict, puuid: str) -> Optional[int]:
     return None
 
 
-def _cs_at_minute(timeline: dict, participant_id: int, minute: int) -> int:
+def _cs_at_minute(timeline: dict, participant_id: int, minute: int,
+                  fallback_total_cs: Optional[int] = None,
+                  fallback_duration_min: Optional[float] = None) -> int:
+    """CS@minute を返す。timeline frames が無い/0 件なら fallback で線形推定。
+
+    fallback (total_cs / duration_min) は LCU カスタム試合のように timeline が
+    記録されないケースで使う。試合長より大きい minute は total_cs を返す。
+    """
     frames = timeline.get("info", {}).get("frames", [])
-    if minute >= len(frames):
-        return 0
-    pf = frames[minute].get("participantFrames", {}).get(str(participant_id), {})
-    return pf.get("minionsKilled", 0) + pf.get("jungleMinionsKilled", 0)
+    if minute < len(frames):
+        pf = frames[minute].get("participantFrames", {}).get(str(participant_id), {})
+        cs = pf.get("minionsKilled", 0) + pf.get("jungleMinionsKilled", 0)
+        if cs > 0:
+            return cs
+    # fallback: 線形推定 (frames無い or 該当時刻フレームが空)
+    if fallback_total_cs is not None and fallback_duration_min and fallback_duration_min > 0:
+        ratio = min(minute, fallback_duration_min) / fallback_duration_min
+        return int(round(fallback_total_cs * ratio))
+    return 0
 
 
 def _gold_at_minute(timeline: dict, participant_id: int, minute: int) -> int:
@@ -226,8 +239,8 @@ def extract_stats(match: dict, timeline: dict, my_puuid: str) -> Optional[MatchS
         deaths=me.get("deaths", 0),
         assists=me.get("assists", 0),
         cs_total=cs_total,
-        cs_at_10=_cs_at_minute(timeline, pid, 10),
-        cs_at_15=_cs_at_minute(timeline, pid, 15),
+        cs_at_10=_cs_at_minute(timeline, pid, 10, cs_total, duration_min),
+        cs_at_15=_cs_at_minute(timeline, pid, 15, cs_total, duration_min),
         cs_per_min=round(cs_total / duration_min, 2),
         vision_score=me.get("visionScore", 0),
         death_timestamps_min=death_ts,

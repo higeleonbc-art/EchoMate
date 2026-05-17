@@ -49,6 +49,7 @@ from coach_lcu_history import (
 )
 from lcu_client import LCUClient, LCUNotRunning
 from adc_knowledge import get_knowledge
+from coach_mmr import estimate_mmr
 import coach_profile
 import coach_kpi
 import coach_personal
@@ -430,6 +431,30 @@ class CoachAPI:
             return {"error": f"Riot API: {e}"}
         except Exception as e:
             logger.exception("recompute_personal failed")
+            return {"error": str(e)}
+
+    # ============================================================
+    # Estimated MMR
+    # ============================================================
+
+    def get_mmr_estimate(self, recent_count: int = 20) -> dict:
+        """現rank + 直近ranked solo勝率から推定MMRを算出"""
+        client = _get_riot_client()
+        if not client:
+            return {"error": "Riot API key not configured"}
+        riot_id = coach_profile.get_riot_id()
+        if not riot_id or "#" not in riot_id:
+            return {"error": "Riot ID not set"}
+        try:
+            name, tag = riot_id.split("#", 1)
+            account = client.get_account_by_riot_id(name.strip(), tag.strip())
+            return estimate_mmr(client, account["puuid"], recent_count=recent_count)
+        except RiotAPIError as e:
+            if e.status_code == 401:
+                return {"error": "API_KEY_EXPIRED"}
+            return {"error": f"Riot API: {e}"}
+        except Exception as e:
+            logger.exception("get_mmr_estimate failed")
             return {"error": str(e)}
 
     def _target_rank_or_default(self) -> str:

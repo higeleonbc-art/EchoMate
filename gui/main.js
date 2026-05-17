@@ -164,6 +164,62 @@ async function loadPersonal() {
     const res = await pywebview.api.get_personal();
     renderPersonal(res.personal, res.gap, res.rank_benchmark, res.target_rank);
   } catch (e) { toast("Personal load failed: " + e, "error"); }
+  loadMmr();
+}
+
+// ======== Estimated MMR ========
+function renderMmr(data) {
+  const ph = document.getElementById("mmrPlaceholder");
+  const body = document.getElementById("mmrBody");
+  if (!data || data.error) {
+    ph.textContent = "MMR: " + (data?.error || "unknown error");
+    ph.style.display = "block";
+    body.style.display = "none";
+    return;
+  }
+  const trendCls = data.trend === "above_rank" ? "delta-pos"
+                 : data.trend === "below_rank" ? "delta-neg" : "delta-zero";
+  const trendIcon = data.trend === "above_rank" ? "↑"
+                  : data.trend === "below_rank" ? "↓" : "≈";
+  const recentWr = data.recent_winrate !== null && data.recent_winrate !== undefined
+                  ? Math.round(data.recent_winrate * 100) + "%" : "-";
+  const overallWr = Math.round((data.overall_winrate || 0) * 100) + "%";
+  body.innerHTML = `
+    <div class="bench-grid">
+      <div class="bench-card">
+        <div class="bench-label">Current Rank</div>
+        <div class="bench-value">${escapeHtml(data.current_label || data.current_rank || "?")}</div>
+        <div class="bench-target">${escapeHtml(data.ranked_record || "")}</div>
+      </div>
+      <div class="bench-card ${trendCls}">
+        <div class="bench-label">Estimated MMR</div>
+        <div class="bench-value">${escapeHtml(data.estimated_mmr_label || "?")} <span class="delta-num">${trendIcon}</span></div>
+        <div class="bench-target">trend: ${escapeHtml(data.trend || "?")}</div>
+      </div>
+      <div class="bench-card">
+        <div class="bench-label">Recent WR (n=${data.recent_sample || 0})</div>
+        <div class="bench-value">${recentWr}</div>
+        <div class="bench-target">overall: ${overallWr}</div>
+      </div>
+    </div>
+    <div style="margin-top:10px;font-size:12px;color:var(--fg-muted)">
+      ${escapeHtml(data.trend_text || "")}<br>
+      <span style="font-size:11px">${escapeHtml(data.note || "")}</span>
+    </div>
+  `;
+  ph.style.display = "none";
+  body.style.display = "block";
+}
+async function loadMmr() {
+  const ph = document.getElementById("mmrPlaceholder");
+  if (ph) { ph.textContent = "Estimating MMR..."; ph.style.display = "block"; }
+  try {
+    const res = await pywebview.api.get_mmr_estimate(20);
+    if (isApiKeyExpired(res?.error)) { handleApiKeyExpired(); return; }
+    renderMmr(res);
+  } catch (e) {
+    renderMmr({ error: String(e) });
+  }
 }
 document.getElementById("recomputePersonal").addEventListener("click", async () => {
   setStatus("computing personal benchmark…", "yellow");
