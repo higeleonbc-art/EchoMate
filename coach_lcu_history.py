@@ -168,10 +168,43 @@ def fetch_lcu_history(puuid: str, count: int = 20,
         return []
 
     games = ((data.get("games") or {}).get("games") or [])
+    logger.info("LCU history: %d games retrieved", len(games))
+
+    # デバッグ: 直近5件の gameType / queueId / mapId / champion を log に
+    for i, g in enumerate(games[:5]):
+        me = next(
+            (p for p in (g.get("participants") or [])
+             if any(pi.get("participantId") == p.get("participantId")
+                    and (pi.get("player") or {}).get("puuid") == puuid
+                    for pi in (g.get("participantIdentities") or []))),
+            None,
+        )
+        logger.info(
+            "  game[%d] type=%s queueId=%s mapId=%s gameMode=%s puuid_match=%s",
+            i,
+            g.get("gameType"),
+            g.get("queueId"),
+            g.get("mapId"),
+            g.get("gameMode"),
+            bool(me),
+        )
+
     if include_matchmaker:
         return games
-    # custom のみ
-    return [g for g in games if g.get("gameType") == "CUSTOM_GAME"]
+
+    # custom判定の緩和: gameType に "CUSTOM" 含む OR queueId == 0 (matchmaker IDではない)
+    def is_custom(g: dict) -> bool:
+        gt = (g.get("gameType") or "").upper()
+        if "CUSTOM" in gt:
+            return True
+        if g.get("queueId") in (0, None):
+            # queueId が無い/ゼロ = matchmaker キューじゃない試合
+            return True
+        return False
+
+    customs = [g for g in games if is_custom(g)]
+    logger.info("LCU history: %d custom games after filter", len(customs))
+    return customs
 
 
 def fetch_lcu_match_full(puuid: str, lcu_match_id: str, champ_map) -> Optional[tuple[dict, dict]]:
