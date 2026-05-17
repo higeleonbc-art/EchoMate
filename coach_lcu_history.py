@@ -42,20 +42,43 @@ def _mark_matches_logged() -> None:
     _DEBUG_LOGGED = True
 
 
-def _find_me_in_lcu_game(g: dict, puuid: str) -> Optional[dict]:
+def _find_me_in_lcu_game(g: dict, puuid: str,
+                          game_name: Optional[str] = None,
+                          tag_line: Optional[str] = None) -> Optional[dict]:
     """LCU game オブジェクトから自分の participant を探す（複数フィールドで照合）"""
     # 1) participants[].puuid 直接 (最近のLCU)
     for p in (g.get("participants") or []):
-        if p.get("puuid") == puuid:
+        if p.get("puuid") and p.get("puuid") == puuid:
             return p
     # 2) participantIdentities[].player.puuid 経由 (旧)
     for pi in (g.get("participantIdentities") or []):
         player = pi.get("player") or {}
-        if player.get("puuid") == puuid:
+        if player.get("puuid") and player.get("puuid") == puuid:
             target_pid = pi.get("participantId")
             for p in (g.get("participants") or []):
                 if p.get("participantId") == target_pid:
                     return p
+    # 3) game_name (Riot ID の name部分) で fallback 照合
+    if game_name:
+        for pi in (g.get("participantIdentities") or []):
+            player = pi.get("player") or {}
+            # 様々な可能性のフィールドで比較
+            candidates = [
+                player.get("gameName"),
+                player.get("summonerName"),
+                player.get("riotIdGameName"),
+                player.get("displayName"),
+            ]
+            if game_name in candidates:
+                # tagLine が指定されていれば追加照合
+                if tag_line:
+                    p_tag = player.get("tagLine") or player.get("riotIdTagLine")
+                    if p_tag and p_tag != tag_line:
+                        continue
+                target_pid = pi.get("participantId")
+                for p in (g.get("participants") or []):
+                    if p.get("participantId") == target_pid:
+                        return p
     return None
 
 
@@ -72,12 +95,21 @@ def lcu_game_to_riot_v5(lcu_game: dict, champ_map) -> dict:
 
     # puuid と participantId の対応取得 (新旧両方の構造に対応)
     pid_to_puuid: dict[int, str] = {}
+    pid_to_name: dict[int, str] = {}  # 名前→fallback識別子
     # 旧: participantIdentities[].player.puuid
     for pi in lcu_game.get("participantIdentities", []) or []:
         pid = pi.get("participantId")
-        p_puuid = (pi.get("player") or {}).get("puuid", "")
-        if pid is not None and p_puuid:
+        if pid is None:
+            continue
+        player = pi.get("player") or {}
+        p_puuid = player.get("puuid", "")
+        if p_puuid:
             pid_to_puuid[pid] = p_puuid
+        # 名前 fallback (gameName / summonerName / riotIdGameName)
+        name = (player.get("gameName") or player.get("summonerName")
+                or player.get("riotIdGameName") or "")
+        if name:
+            pid_to_name[pid] = name
     # 新: participants[].puuid 直接 (これがあれば上書き)
     for p in lcu_game.get("participants", []) or []:
         pid = p.get("participantId")
@@ -99,8 +131,15 @@ def lcu_game_to_riot_v5(lcu_game: dict, champ_map) -> dict:
         role = (timeline.get("role") or "").upper()
         team_position = _lane_role_to_position(lane, role)
 
+        # puuidが取れない場合は participant Identity の name から合成IDを作成
+        # (build_review の照合で他人と被らないように)
+        resolved_puuid = pid_to_puuid.get(pid, "")
+        if not resolved_puuid:
+            name = pid_to_name.get(pid, "")
+            if name:
+                resolved_puuid = f"LCU_NAME:{name}"
         participants_v5.append({
-            "puuid":         pid_to_puuid.get(pid, ""),
+            "puuid":         resolved_puuid,
             "participantId": pid,
             "championId":    cid,
             "championName":  champ_name or "",
@@ -174,9 +213,13 @@ def lcu_timeline_to_riot_v5(lcu_timeline: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def fetch_lcu_history(puuid: str, count: int = 20,
-                      include_matchmaker: bool = False) -> list[dict]:
+                      include_matchmaker: bool = False,
+                      game_name: Optional[str] = None,
+                      tag_line: Optional[str] = None) -> list[dict]:
     """LCU から試合履歴を取得。custom のみフィルタ可能。
 
+    Args:
+        game_name / tag_line: PUUID マッチ失敗時の fallback 用 Riot ID 部品
     Returns:
         list of raw LCU games dict
     """
@@ -205,23 +248,11 @@ def fetch_lcu_history(puuid: str, count: int = 20,
         return []
 
     games = ((data.get("games") or {}).get("games") or [])
-    logger.info("LCU history: %d games retrieved", len(games))
+    logger.info("LCU history: %d games retrieved (game_name fallback=%r)",
+                len(games), game_name)
 
-    # デバッグ: 直近5件の gameType / queueId / mapId / champion を log に
-    for i, g in enumerate(games[:5]):
-        me = _find_me_in_lcu_game(g, puuid)
-        logger.info(
-            "  game[%d] type=%s queueId=%s mapId=%s gameMode=%s puuid_match=%s",
-            i,
-            g.get("gameType"),
-            g.get("queueId"),
-            g.get("mapId"),
-            g.get("gameMode"),
-            bool(me),
-        )
-
-    # 構造デバッグ (1度だけ): participants[0] / participantIdentities[0] の利用可能キー
-    if games and not _matches_logged():
+    # 構造デバッグ (毎回出す): participants[0] / participantIdentities[0] の利用可能キー
+    if games:
         g0 = games[0]
         parts = g0.get("participants") or []
         ids = g0.get("participantIdentities") or []
@@ -234,13 +265,25 @@ def fetch_lcu_history(puuid: str, count: int = 20,
             logger.info("  DEBUG participantIdentities[0] keys: %s", sorted(ids[0].keys()))
             player = ids[0].get("player") or {}
             logger.info("  DEBUG participantIdentities[0].player keys: %s", sorted(player.keys()))
-            for k in ("puuid", "summonerName", "gameName", "tagLine", "summonerId"):
+            for k in ("puuid", "summonerName", "gameName", "tagLine", "riotIdGameName", "riotIdTagLine", "summonerId"):
                 if k in player:
                     val = player.get(k) or ""
                     if isinstance(val, str) and len(val) > 25:
                         val = val[:25] + "..."
                     logger.info("    player.%s = %r", k, val)
-        _mark_matches_logged()
+
+    # デバッグ: 直近5件のマッチング結果
+    for i, g in enumerate(games[:5]):
+        me = _find_me_in_lcu_game(g, puuid, game_name=game_name, tag_line=tag_line)
+        logger.info(
+            "  game[%d] type=%s queueId=%s mapId=%s gameMode=%s puuid_match=%s",
+            i,
+            g.get("gameType"),
+            g.get("queueId"),
+            g.get("mapId"),
+            g.get("gameMode"),
+            bool(me),
+        )
 
     if include_matchmaker:
         return games

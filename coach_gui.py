@@ -219,7 +219,12 @@ class CoachAPI:
                     self._champ_map.load(); self._cmap_loaded = True
                 except Exception:
                     pass
-            lcu_games = fetch_lcu_history(puuid, count=count, include_matchmaker=False)
+            # Riot ID を分解して LCU history の fallback 照合に使う
+            _game_name, _tag_line = (riot_id.split("#", 1) + [""])[:2]
+            lcu_games = fetch_lcu_history(
+                puuid, count=count, include_matchmaker=False,
+                game_name=_game_name.strip(), tag_line=_tag_line.strip(),
+            )
             for g in lcu_games:
                 m_v5 = lcu_game_to_riot_v5(g, self._champ_map)
                 info = m_v5["info"]
