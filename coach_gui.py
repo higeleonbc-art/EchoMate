@@ -417,12 +417,17 @@ class CoachAPI:
     # Debug: ログ取得
     # ============================================================
 
-    def get_recent_log(self, lines: int = 200) -> dict:
-        """ローカル .coach.log の末尾N行を返す（GUI Settings から見られるよう）"""
+    def get_recent_log(self, lines: int = 200, source: str = "gui") -> dict:
+        """ローカルログの末尾N行を返す。
+
+        source: 'gui' → .coach.log (この GUI プロセス)
+                'live' → .coach_live.log (Live Overlay 別プロセス)
+        """
         try:
-            log_path = Path(__file__).parent / ".coach.log"
+            fname = ".coach_live.log" if source == "live" else ".coach.log"
+            log_path = Path(__file__).parent / fname
             if not log_path.exists():
-                return {"text": "(no log file)", "path": str(log_path)}
+                return {"text": f"(no log file: {fname})", "path": str(log_path)}
             content = log_path.read_text(encoding="utf-8", errors="replace")
             tail = "\n".join(content.splitlines()[-lines:])
             return {"text": tail, "path": str(log_path), "size": len(content)}

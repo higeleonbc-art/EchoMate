@@ -244,6 +244,7 @@ def run_live(rank: str = "GOLD", click_through: bool = True) -> None:
 
 if __name__ == "__main__":
     import argparse
+    from pathlib import Path as _P
 
     parser = argparse.ArgumentParser(description="LoL ADC live overlay")
     parser.add_argument("--rank", default="GOLD")
@@ -251,5 +252,17 @@ if __name__ == "__main__":
                         help="クリックスルーを無効化し、ドラッグ移動・ESC終了を可能にする (位置調整時用)")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
-    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
+
+    # ファイルログを必ず .coach_live.log に出す (subprocess 起動でも消えないように)
+    log_path = _P(__file__).parent / ".coach_live.log"
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.FileHandler(str(log_path), mode="a", encoding="utf-8"),
+            logging.StreamHandler(),
+        ],
+    )
+    logging.info("==== Live Overlay start (rank=%s, draggable=%s) ==== log: %s",
+                 args.rank, args.draggable, log_path)
     run_live(args.rank, click_through=not args.draggable)

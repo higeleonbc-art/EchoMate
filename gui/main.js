@@ -485,15 +485,17 @@ async function startOverlay(draggable = false) {
 }
 document.getElementById("startLiveOverlay").addEventListener("click", () => startOverlay(false));
 document.getElementById("startLiveDraggable").addEventListener("click", () => startOverlay(true));
-document.getElementById("showLog").addEventListener("click", async () => {
+async function _showLog(source) {
   try {
-    const res = await pywebview.api.get_recent_log(200);
+    const res = await pywebview.api.get_recent_log(200, source);
     const v = document.getElementById("logViewer");
     if (res.error) { v.textContent = "ERROR: " + res.error; }
     else { v.textContent = `[${res.path}]\n\n` + (res.text || "(empty)"); }
     v.style.display = "block";
   } catch (e) { toast("log read failed: " + e, "error"); }
-});
+}
+document.getElementById("showLog").addEventListener("click", () => _showLog("gui"));
+document.getElementById("showLiveLog").addEventListener("click", () => _showLog("live"));
 
 document.getElementById("stopLiveOverlay").addEventListener("click", async () => {
   try {
