@@ -143,11 +143,25 @@ def fetch_lcu_history(puuid: str, count: int = 20,
     Returns:
         list of raw LCU games dict
     """
+    import httpx
     try:
         with LCUClient() as lcu:
             data = lcu.get_match_history(puuid, count=count)
     except LCUNotRunning:
         logger.info("LCU not running, skip LCU history fetch")
+        return []
+    except httpx.HTTPStatusError as e:
+        body = ""
+        try:
+            body = (e.response.text or "")[:300]
+        except Exception:
+            pass
+        logger.warning(
+            "LCU match history HTTP %s for %s body=%r",
+            e.response.status_code if e.response is not None else "?",
+            e.request.url if e.request is not None else "?",
+            body,
+        )
         return []
     except Exception as e:
         logger.warning("LCU match history fetch failed: %s", e)

@@ -119,14 +119,31 @@ class LCUClient:
     def get_match_history(self, puuid: str, count: int = 20) -> dict:
         """ローカルクライアントの試合履歴（カスタム含む）。
 
-        返り値は LCU 形式 (games.games[]). custom 試合の gameType は "CUSTOM_GAME"。
-        通常 matchmaker 試合は "MATCHED_GAME"。
+        試行順:
+          1. /lol-match-history/v1/products/lol/current-summoner/matches  (現ログインユーザー)
+          2. /lol-match-history/v1/products/lol/{puuid}/matches            (puuid直)
+        最近のクライアントでは current-summoner 版の方が安定。
         """
         end = max(0, count - 1)
-        return self.get(  # type: ignore[return-value]
-            f"/lol-match-history/v1/products/lol/{puuid}/matches"
-            f"?begIndex=0&endIndex={end}"
-        )
+        last_err: Optional[Exception] = None
+        for path in (
+            f"/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex={end}",
+            f"/lol-match-history/v1/products/lol/{puuid}/matches?begIndex=0&endIndex={end}",
+        ):
+            try:
+                return self.get(path)  # type: ignore[return-value]
+            except httpx.HTTPStatusError as e:
+                body = ""
+                try:
+                    body = (e.response.text or "")[:300]
+                except Exception:
+                    pass
+                logger.debug("LCU match history try failed: %s body=%r", path, body)
+                last_err = e
+                continue
+        if last_err:
+            raise last_err
+        return {}
 
     def get_match_detail_by_game_id(self, game_id: int) -> dict:
         """LCU から単一試合詳細を取得"""
